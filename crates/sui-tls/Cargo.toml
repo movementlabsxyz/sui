@@ -1,6 +1,6 @@
 [package]
 name = "sui-tls"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 license = "Apache-2.0"
 authors = ["Brandon Williams <brandon@mystenlabs.com>"]
 description = "tools for rustls-based certificate generation and verification"

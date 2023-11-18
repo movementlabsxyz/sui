@@ -1,6 +1,6 @@
 [package]
 name = "mysten-util-mem"
-version = "0.11.0"
+version = "0.11.0-canonical-sui"
 authors = ["Parity Technologies <admin@parity.io>", "Andrew Schran <aschran@mystenlabs.com>"]
 repository = "https://github.com/mystenlabs/mysten-infra"
 description = "Collection of memory related utilities"

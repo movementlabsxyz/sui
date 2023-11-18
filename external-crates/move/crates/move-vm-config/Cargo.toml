@@ -1,6 +1,6 @@
 [package]
 name = "move-vm-config"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 authors = ["Diem Association <opensource@diem.com>"]
 repository = "https://github.com/move-language/move"
 license = "Apache-2.0"

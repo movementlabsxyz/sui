@@ -1,6 +1,6 @@
 [package]
 name = "move-abstract-stack"
-version = "0.0.1"
+version = "0.0.1-canonical-sui"
 authors = ["The Move Contributors"]
 publish = false
 edition = "2021"

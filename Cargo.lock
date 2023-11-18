@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "anemo-benchmark"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-build",
@@ -186,7 +186,7 @@ dependencies = [
  "rand 0.8.5",
  "telemetry-subscribers",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -1835,7 +1835,7 @@ checksum = "c3ac9f8b63eca6fd385229b3675f6cc0dc5c8a5c8a54a59d4f52ffd670d87b0c"
 
 [[package]]
 name = "bytecode-interpreter-crypto"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "curve25519-dalek-fiat",
@@ -2900,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "data-transform"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "base64 0.21.2",
@@ -2916,7 +2916,7 @@ dependencies = [
  "sui-json-rpc-types",
  "sui-types",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -3485,7 +3485,7 @@ checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
 name = "enum-compat-util"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "serde_yaml 0.8.26",
 ]
@@ -5546,7 +5546,7 @@ checksum = "1fafa6961cabd9c63bcd77a45d7e3b7f3b552b70417831fb0f56db717e72407e"
 
 [[package]]
 name = "move-abigen"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5562,11 +5562,11 @@ dependencies = [
 
 [[package]]
 name = "move-abstract-stack"
-version = "0.0.1"
+version = "0.0.1-canonical-sui"
 
 [[package]]
 name = "move-binary-format"
-version = "0.0.3"
+version = "0.0.3-canonical-sui"
 dependencies = [
  "anyhow",
  "enum-compat-util",
@@ -5579,11 +5579,11 @@ dependencies = [
 
 [[package]]
 name = "move-borrow-graph"
-version = "0.0.1"
+version = "0.0.1-canonical-sui"
 
 [[package]]
 name = "move-bytecode-source-map"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5597,7 +5597,7 @@ dependencies = [
 
 [[package]]
 name = "move-bytecode-utils"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "move-binary-format",
@@ -5608,7 +5608,7 @@ dependencies = [
 
 [[package]]
 name = "move-bytecode-verifier"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -5620,7 +5620,7 @@ dependencies = [
 
 [[package]]
 name = "move-bytecode-verifier-v0"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -5632,7 +5632,7 @@ dependencies = [
 
 [[package]]
 name = "move-bytecode-verifier-v1"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -5644,7 +5644,7 @@ dependencies = [
 
 [[package]]
 name = "move-bytecode-viewer"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "clap",
@@ -5658,7 +5658,7 @@ dependencies = [
 
 [[package]]
 name = "move-cli"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5695,7 +5695,7 @@ dependencies = [
 
 [[package]]
 name = "move-command-line-common"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "difference",
@@ -5711,7 +5711,7 @@ dependencies = [
 
 [[package]]
 name = "move-compiler"
-version = "0.0.1"
+version = "0.0.1-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5736,7 +5736,7 @@ dependencies = [
 
 [[package]]
 name = "move-core-types"
-version = "0.0.4"
+version = "0.0.4-canonical-sui"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -5759,7 +5759,7 @@ dependencies = [
 
 [[package]]
 name = "move-coverage"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5777,7 +5777,7 @@ dependencies = [
 
 [[package]]
 name = "move-disassembler"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5795,7 +5795,7 @@ dependencies = [
 
 [[package]]
 name = "move-docgen"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "codespan",
@@ -5812,7 +5812,7 @@ dependencies = [
 
 [[package]]
 name = "move-errmapgen"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "move-command-line-common",
@@ -5823,7 +5823,7 @@ dependencies = [
 
 [[package]]
 name = "move-ir-compiler"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5838,7 +5838,7 @@ dependencies = [
 
 [[package]]
 name = "move-ir-to-bytecode"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "codespan-reporting",
@@ -5855,7 +5855,7 @@ dependencies = [
 
 [[package]]
 name = "move-ir-to-bytecode-syntax"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "hex",
@@ -5867,7 +5867,7 @@ dependencies = [
 
 [[package]]
 name = "move-ir-types"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "hex",
  "move-command-line-common",
@@ -5879,7 +5879,7 @@ dependencies = [
 
 [[package]]
 name = "move-model"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "codespan",
@@ -5903,7 +5903,7 @@ dependencies = [
 
 [[package]]
 name = "move-package"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "clap",
@@ -5934,7 +5934,7 @@ dependencies = [
 
 [[package]]
 name = "move-proc-macros"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "enum-compat-util",
  "quote 1.0.33",
@@ -5943,7 +5943,7 @@ dependencies = [
 
 [[package]]
 name = "move-prover"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "clap",
@@ -5966,7 +5966,7 @@ dependencies = [
 
 [[package]]
 name = "move-prover-boogie-backend"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5992,7 +5992,7 @@ dependencies = [
 
 [[package]]
 name = "move-read-write-set-types"
-version = "0.0.3"
+version = "0.0.3-canonical-sui"
 dependencies = [
  "move-binary-format",
  "move-core-types",
@@ -6001,7 +6001,7 @@ dependencies = [
 
 [[package]]
 name = "move-stackless-bytecode"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "codespan",
  "codespan-reporting",
@@ -6023,7 +6023,7 @@ dependencies = [
 
 [[package]]
 name = "move-stackless-bytecode-interpreter"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bytecode-interpreter-crypto",
@@ -6039,7 +6039,7 @@ dependencies = [
 
 [[package]]
 name = "move-stdlib"
-version = "0.1.1"
+version = "0.1.1-canonical-sui"
 dependencies = [
  "anyhow",
  "hex",
@@ -6060,7 +6060,7 @@ dependencies = [
 
 [[package]]
 name = "move-stdlib-v0"
-version = "0.1.1"
+version = "0.1.1-canonical-sui"
 dependencies = [
  "anyhow",
  "hex",
@@ -6081,7 +6081,7 @@ dependencies = [
 
 [[package]]
 name = "move-stdlib-v1"
-version = "0.1.1"
+version = "0.1.1-canonical-sui"
 dependencies = [
  "anyhow",
  "hex",
@@ -6102,7 +6102,7 @@ dependencies = [
 
 [[package]]
 name = "move-symbol-pool"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "once_cell",
  "phf",
@@ -6111,7 +6111,7 @@ dependencies = [
 
 [[package]]
 name = "move-transactional-test-runner"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6140,7 +6140,7 @@ dependencies = [
 
 [[package]]
 name = "move-unit-test"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "better_any",
@@ -6169,14 +6169,14 @@ dependencies = [
 
 [[package]]
 name = "move-vm-config"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-binary-format",
 ]
 
 [[package]]
 name = "move-vm-profiler"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-vm-config",
  "once_cell",
@@ -6186,7 +6186,7 @@ dependencies = [
 
 [[package]]
 name = "move-vm-runtime"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "better_any",
  "fail",
@@ -6205,7 +6205,7 @@ dependencies = [
 
 [[package]]
 name = "move-vm-runtime-v0"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "better_any",
  "fail",
@@ -6224,7 +6224,7 @@ dependencies = [
 
 [[package]]
 name = "move-vm-runtime-v1"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "better_any",
  "fail",
@@ -6243,7 +6243,7 @@ dependencies = [
 
 [[package]]
 name = "move-vm-test-utils"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "move-binary-format",
@@ -6256,7 +6256,7 @@ dependencies = [
 
 [[package]]
 name = "move-vm-types"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "move-binary-format",
@@ -6386,17 +6386,17 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "mysten-common"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "futures",
  "parking_lot 0.12.1",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "mysten-metrics"
-version = "0.7.0"
+version = "0.7.0-canonical-sui"
 dependencies = [
  "async-trait",
  "axum",
@@ -6411,12 +6411,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "mysten-network"
-version = "0.2.0"
+version = "0.2.0-canonical-sui"
 dependencies = [
  "anemo",
  "bcs",
@@ -6434,12 +6434,12 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "mysten-util-mem"
-version = "0.11.0"
+version = "0.11.0-canonical-sui"
 dependencies = [
  "cfg-if",
  "ed25519-consensus",
@@ -6453,17 +6453,17 @@ dependencies = [
  "parking_lot 0.12.1",
  "roaring",
  "smallvec",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "mysten-util-mem-derive"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "proc-macro2 1.0.66",
  "syn 1.0.107",
  "synstructure",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -6522,7 +6522,7 @@ dependencies = [
 
 [[package]]
 name = "narwhal-config"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "fastcrypto",
  "fastcrypto-tbls",
@@ -6538,12 +6538,12 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-crypto"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "bincode",
@@ -6557,12 +6557,12 @@ dependencies = [
  "serde-reflection",
  "serde_json",
  "shared-crypto",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-executor"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "async-trait",
  "bcs",
@@ -6591,12 +6591,12 @@ dependencies = [
  "tonic 0.10.0",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-network"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -6622,12 +6622,12 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-node"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "arc-swap",
@@ -6666,12 +6666,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-primary"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -6721,12 +6721,12 @@ dependencies = [
  "tower",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-storage"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "fastcrypto",
  "futures",
@@ -6743,12 +6743,12 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-test-utils"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "fastcrypto",
@@ -6776,12 +6776,12 @@ dependencies = [
  "tonic 0.10.0",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-types"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-build",
@@ -6824,12 +6824,12 @@ dependencies = [
  "tonic-build",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "narwhal-worker"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -6866,7 +6866,7 @@ dependencies = [
  "tower",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -8111,12 +8111,12 @@ dependencies = [
 
 [[package]]
 name = "prometheus-closure-metric"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "prometheus",
  "protobuf",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -9649,14 +9649,14 @@ dependencies = [
 
 [[package]]
 name = "shared-crypto"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "bcs",
  "eyre",
  "fastcrypto",
  "serde",
  "serde_repr",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -9750,7 +9750,7 @@ dependencies = [
 
 [[package]]
 name = "simulacrum"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9777,7 +9777,7 @@ dependencies = [
  "sui-transaction-checks",
  "sui-types",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -10026,7 +10026,7 @@ checksum = "734676eb262c623cec13c3155096e08d1f8f29adce39ba17948b18dad1e54142"
 
 [[package]]
 name = "sui"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anemo",
  "anyhow",
@@ -10091,12 +10091,12 @@ dependencies = [
  "tokio",
  "tracing",
  "unescape",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-adapter-latest"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10118,21 +10118,21 @@ dependencies = [
  "sui-types",
  "sui-verifier-latest",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-adapter-transactional-tests"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "datatest-stable",
  "sui-transactional-test-runner",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-adapter-v0"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10155,12 +10155,12 @@ dependencies = [
  "sui-types",
  "sui-verifier-v0",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-adapter-v1"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10182,12 +10182,12 @@ dependencies = [
  "sui-types",
  "sui-verifier-v1",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-analytics-indexer"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -10229,22 +10229,22 @@ dependencies = [
  "typed-store",
  "typed-store-derive",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-analytics-indexer-derive"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "proc-macro2 1.0.66",
  "quote 1.0.33",
  "syn 1.0.107",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-archival"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -10272,12 +10272,12 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-aws-orchestrator"
-version = "0.0.1"
+version = "0.0.1-canonical-sui"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -10303,12 +10303,12 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-benchmark"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10353,12 +10353,12 @@ dependencies = [
  "tokio-util 0.7.4",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-cluster-test"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10390,12 +10390,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-config"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anemo",
  "anyhow",
@@ -10418,12 +10418,12 @@ dependencies = [
  "sui-types",
  "tempfile",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-core"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -10508,13 +10508,13 @@ dependencies = [
  "tracing",
  "typed-store",
  "typed-store-derive",
- "workspace-hack",
+ "workspace-hack 0.1.0",
  "zeroize",
 ]
 
 [[package]]
 name = "sui-cost"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10532,12 +10532,12 @@ dependencies = [
  "sui-types",
  "test-cluster",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-e2e-tests"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -10584,20 +10584,20 @@ dependencies = [
  "test-cluster",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-enum-compat-util"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "serde_yaml 0.8.26",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-execution"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "cargo_metadata",
  "move-binary-format",
@@ -10620,12 +10620,12 @@ dependencies = [
  "sui-verifier-latest",
  "sui-verifier-v0",
  "sui-verifier-v1",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-execution-cut"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "clap",
@@ -10634,12 +10634,12 @@ dependencies = [
  "thiserror",
  "toml 0.7.4",
  "toml_edit 0.19.10",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-faucet"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -10675,12 +10675,12 @@ dependencies = [
  "typed-store",
  "typed-store-derive",
  "uuid",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-framework"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10692,12 +10692,12 @@ dependencies = [
  "sui-move-build",
  "sui-types",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-framework-snapshot"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10708,12 +10708,12 @@ dependencies = [
  "sui-protocol-config",
  "sui-types",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-framework-tests"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-bytecode-verifier",
  "move-cli",
@@ -10727,12 +10727,12 @@ dependencies = [
  "sui-protocol-config",
  "sui-types",
  "sui-verifier-latest",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-genesis-builder"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10756,12 +10756,12 @@ dependencies = [
  "sui-types",
  "tempfile",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-graphql-rpc"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -10816,12 +10816,12 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-indexer"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10869,12 +10869,12 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-json"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -10889,12 +10889,12 @@ dependencies = [
  "sui-move-build",
  "sui-types",
  "test-fuzz",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-json-rpc"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -10939,12 +10939,12 @@ dependencies = [
  "tower-http",
  "tracing",
  "typed-store-error",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-json-rpc-tests"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10975,12 +10975,12 @@ dependencies = [
  "test-cluster",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-json-rpc-types"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -11004,12 +11004,12 @@ dependencies = [
  "sui-types",
  "tabled",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-keys"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bip32",
@@ -11023,12 +11023,12 @@ dependencies = [
  "sui-types",
  "tempfile",
  "tiny-bip39",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-kvstore"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11047,23 +11047,23 @@ dependencies = [
  "sui-types",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-macros"
-version = "0.7.0"
+version = "0.7.0-canonical-sui"
 dependencies = [
  "futures",
  "once_cell",
  "sui-proc-macros",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-metric-checker"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "backoff",
@@ -11080,12 +11080,12 @@ dependencies = [
  "telemetry-subscribers",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-move"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -11127,7 +11127,7 @@ dependencies = [
 
 [[package]]
 name = "sui-move-build"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "datatest-stable",
@@ -11145,12 +11145,12 @@ dependencies = [
  "sui-types",
  "sui-verifier-latest",
  "tempfile",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-move-natives-latest"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "better_any",
@@ -11165,12 +11165,12 @@ dependencies = [
  "smallvec",
  "sui-protocol-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-move-natives-v0"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "better_any",
@@ -11185,12 +11185,12 @@ dependencies = [
  "smallvec",
  "sui-protocol-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-move-natives-v1"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "better_any",
@@ -11205,12 +11205,12 @@ dependencies = [
  "smallvec",
  "sui-protocol-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-network"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-build",
@@ -11239,12 +11239,12 @@ dependencies = [
  "tonic-build",
  "tower",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-node"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -11288,12 +11288,12 @@ dependencies = [
  "tracing",
  "typed-store",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-open-rpc"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -11313,12 +11313,12 @@ dependencies = [
  "sui-types",
  "tokio",
  "versions",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-open-rpc-macros"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "derive-syn-parse",
  "itertools",
@@ -11326,12 +11326,12 @@ dependencies = [
  "quote 1.0.33",
  "syn 1.0.107",
  "unescape",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-oracle"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -11352,12 +11352,12 @@ dependencies = [
  "telemetry-subscribers",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-package-resolver"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "async-trait",
  "bcs",
@@ -11377,24 +11377,24 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-proc-macros"
-version = "0.7.0"
+version = "0.7.0-canonical-sui"
 dependencies = [
  "msim-macros",
  "proc-macro2 1.0.66",
  "quote 1.0.33",
  "sui-enum-compat-util",
  "syn 2.0.32",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-protocol-config"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "clap",
  "insta",
@@ -11403,22 +11403,22 @@ dependencies = [
  "serde_with",
  "sui-protocol-config-macros",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-protocol-config-macros"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "proc-macro2 1.0.66",
  "quote 1.0.33",
  "syn 1.0.107",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-proxy"
-version = "0.0.2"
+version = "0.0.2-canonical-sui"
 dependencies = [
  "anyhow",
  "axum",
@@ -11455,12 +11455,12 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-replay"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -11497,12 +11497,12 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-rest-api"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "axum",
@@ -11514,12 +11514,12 @@ dependencies = [
  "sui-core",
  "sui-types",
  "tokio",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-rosetta"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11557,12 +11557,12 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-rpc-loadgen"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11587,12 +11587,12 @@ dependencies = [
  "tokio",
  "tonic 0.10.0",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-sdk"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -11622,12 +11622,12 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-simulator"
-version = "0.7.0"
+version = "0.7.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -11644,12 +11644,12 @@ dependencies = [
  "tempfile",
  "tower",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-single-node-benchmark"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "async-trait",
  "bcs",
@@ -11675,12 +11675,12 @@ dependencies = [
  "telemetry-subscribers",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-snapshot"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "bcs",
@@ -11702,12 +11702,12 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-source-validation"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "expect-test",
@@ -11728,12 +11728,12 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-source-validation-service"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "axum",
@@ -11767,12 +11767,12 @@ dependencies = [
  "tower-http",
  "tracing",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-storage"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11822,13 +11822,13 @@ dependencies = [
  "typed-store",
  "typed-store-derive",
  "url",
- "workspace-hack",
+ "workspace-hack 0.1.0",
  "zstd",
 ]
 
 [[package]]
 name = "sui-surfer"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "async-trait",
  "bcs",
@@ -11852,12 +11852,12 @@ dependencies = [
  "test-cluster",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-swarm"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "futures",
@@ -11877,12 +11877,12 @@ dependencies = [
  "tokio",
  "tonic-health",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-swarm-config"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anemo",
  "anyhow",
@@ -11904,23 +11904,23 @@ dependencies = [
  "sui-types",
  "tempfile",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-telemetry"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "reqwest",
  "serde",
  "sui-core",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-test-transaction-builder"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "bcs",
  "move-core-types",
@@ -11929,12 +11929,12 @@ dependencies = [
  "sui-move-build",
  "sui-sdk",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-test-validator"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "axum",
@@ -11947,12 +11947,12 @@ dependencies = [
  "tower",
  "tower-http",
  "uuid",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-tls"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "axum",
@@ -11968,13 +11968,13 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.24.0",
  "tower-layer",
- "workspace-hack",
+ "workspace-hack 0.1.0",
  "x509-parser",
 ]
 
 [[package]]
 name = "sui-tool"
-version = "1.15.0"
+version = "1.15.0-canonical-sui"
 dependencies = [
  "anemo",
  "anemo-cli",
@@ -12015,12 +12015,12 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-transaction-builder"
-version = "0.0.0"
+version = "0.0.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -12032,12 +12032,12 @@ dependencies = [
  "sui-json-rpc-types",
  "sui-protocol-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-transaction-checks"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "fastcrypto-zkp",
  "once_cell",
@@ -12047,12 +12047,12 @@ dependencies = [
  "sui-protocol-config",
  "sui-types",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-transactional-test-runner"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -12090,12 +12090,12 @@ dependencies = [
  "tokio",
  "typed-store",
  "typed-store-derive",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-types"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anemo",
  "anyhow",
@@ -12151,12 +12151,12 @@ dependencies = [
  "tonic 0.10.0",
  "tracing",
  "typed-store-error",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-upgrade-compatibility-transactional-tests"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "datatest-stable",
@@ -12166,12 +12166,12 @@ dependencies = [
  "move-compiler",
  "move-package",
  "sui-move-build",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-verifier-latest"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -12180,21 +12180,21 @@ dependencies = [
  "move-core-types",
  "move-vm-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-verifier-transactional-tests"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "datatest-stable",
  "sui-transactional-test-runner",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-verifier-v0"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -12204,12 +12204,12 @@ dependencies = [
  "move-vm-config",
  "sui-protocol-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "sui-verifier-v1"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-abstract-stack",
  "move-binary-format",
@@ -12218,7 +12218,7 @@ dependencies = [
  "move-core-types",
  "move-vm-config",
  "sui-types",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -12370,7 +12370,7 @@ dependencies = [
 
 [[package]]
 name = "telemetry-subscribers"
-version = "0.2.0"
+version = "0.2.0-canonical-sui"
 dependencies = [
  "atomic_float",
  "bytes",
@@ -12393,7 +12393,7 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -12469,7 +12469,7 @@ checksum = "95059e91184749cb66be6dc994f67f182b6d897cb3df74a5bf66b5e709295fd8"
 
 [[package]]
 name = "test-cluster"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "fastcrypto-zkp",
@@ -12495,7 +12495,7 @@ dependencies = [
  "sui-types",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -13173,7 +13173,7 @@ dependencies = [
 
 [[package]]
 name = "transaction-fuzzer"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "move-core-types",
  "once_cell",
@@ -13186,7 +13186,7 @@ dependencies = [
  "sui-types",
  "tokio",
  "tracing",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -13260,7 +13260,7 @@ checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typed-store"
-version = "0.4.0"
+version = "0.4.0-canonical-sui"
 dependencies = [
  "async-trait",
  "bcs",
@@ -13290,12 +13290,12 @@ dependencies = [
  "typed-store-derive",
  "typed-store-error",
  "uint",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "typed-store-derive"
-version = "0.3.0"
+version = "0.3.0-canonical-sui"
 dependencies = [
  "eyre",
  "proc-macro2 1.0.66",
@@ -13305,16 +13305,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "typed-store",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
 name = "typed-store-error"
-version = "0.4.0"
+version = "0.4.0-canonical-sui"
 dependencies = [
  "serde",
  "thiserror",
- "workspace-hack",
+ "workspace-hack 0.1.0",
 ]
 
 [[package]]
@@ -13998,7 +13998,7 @@ dependencies = [
 
 [[package]]
 name = "workspace-hack"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "Inflector",
  "addr2line",
@@ -14951,6 +14951,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace-hack"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
+
+[[package]]
 name = "wyz"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14958,7 +14964,7 @@ checksum = "85e60b0d1b5f99db2556934e21937020776a5d31520bf169e851ac44e6420214"
 
 [[package]]
 name = "x"
-version = "0.1.0"
+version = "0.1.0-canonical-sui"
 dependencies = [
  "anyhow",
  "clap",
