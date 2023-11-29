@@ -33,7 +33,7 @@ pub mod subscription_handler;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 mod transaction_input_loader;
-mod transaction_manager;
+pub mod transaction_manager;
 pub mod transaction_orchestrator;
 pub mod verify_indexes;
 

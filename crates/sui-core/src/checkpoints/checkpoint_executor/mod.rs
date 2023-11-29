@@ -151,11 +151,13 @@ impl CheckpointExecutor {
             .unwrap_or(0);
 
         loop {
+            debug!("Looping epoch");
             // If we have executed the last checkpoint of the current epoch, stop.
             if self
                 .check_epoch_last_checkpoint(epoch_store.clone(), &highest_executed)
                 .await
             {
+                debug!("Checked last epoch checkpoint");
                 self.checkpoint_store
                     .prune_local_summaries()
                     .tap_err(|e| error!("Failed to prune local summaries: {}", e))
@@ -180,12 +182,14 @@ impl CheckpointExecutor {
             self.metrics
                 .checkpoint_exec_inflight
                 .set(pending.len() as i64);
+            debug!("Checking for completed workers...");
             tokio::select! {
                 // Check for completed workers and ratchet the highest_checkpoint_executed
                 // watermark accordingly. Note that given that checkpoints are guaranteed to
                 // be processed (added to FuturesOrdered) in seq_number order, using FuturesOrdered
                 // guarantees that we will also ratchet the watermarks in order.
                 Some(Ok(checkpoint)) = pending.next() => {
+                    debug!("Got pending next checkpoint");
                     self.process_executed_checkpoint(&checkpoint);
                     highest_executed = Some(checkpoint);
 

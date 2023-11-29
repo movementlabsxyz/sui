@@ -12,6 +12,7 @@ use indexmap::IndexMap;
 use lru::LruCache;
 use mysten_metrics::monitored_scope;
 use parking_lot::RwLock;
+use serde::de;
 use sui_types::executable_transaction::VerifiedExecutableTransaction;
 use sui_types::{base_types::TransactionDigest, error::SuiResult, fp_ensure};
 use sui_types::{
@@ -23,7 +24,7 @@ use sui_types::{
     transaction::{TransactionDataAPI, VerifiedCertificate},
 };
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 use crate::authority::{
     authority_per_epoch_store::AuthorityPerEpochStore, authority_store::LockMode,
@@ -383,7 +384,7 @@ impl TransactionManager {
     /// which contains certificates not yet executed from Narwhal output and RPC.
     /// Transactions from other sources, e.g. checkpoint executor, have own persistent storage to
     /// retry transactions.
-    pub(crate) fn new(
+    pub fn new(
         authority_store: Arc<AuthorityStore>,
         epoch_store: &AuthorityPerEpochStore,
         tx_ready_certificates: UnboundedSender<(
@@ -423,12 +424,13 @@ impl TransactionManager {
     }
 
     #[instrument(level = "trace", skip_all)]
-    pub(crate) fn enqueue(
+    pub fn enqueue(
         &self,
         certs: Vec<VerifiedExecutableTransaction>,
         epoch_store: &AuthorityPerEpochStore,
     ) -> SuiResult<()> {
         let certs = certs.into_iter().map(|cert| (cert, None)).collect();
+        debug!(?certs, "Enqueueing certificates");
         self.enqueue_impl(certs, epoch_store)
     }
 
@@ -472,6 +474,7 @@ impl TransactionManager {
                         .inc();
                     false
                 } else {
+                    debug!("Certificate not yet executed: {:?}", cert);
                     true
                 }
             })
@@ -564,6 +567,7 @@ impl TransactionManager {
                 // cache. However, packages will likely be read often, so we do want to insert them
                 // even if they cause evictions.
                 inner.available_objects_cache.insert(&key);
+                debug!(?key, "Mutable object available");
             }
             object_availability
                 .insert(key, Some(available))
@@ -826,6 +830,7 @@ impl TransactionManager {
 
     /// Sends the ready certificate for execution.
     fn certificate_ready(&self, inner: &mut Inner, pending_certificate: PendingCertificate) {
+        debug!(?pending_certificate.certificate, "Certificate ready");
         let cert = pending_certificate.certificate;
         let expected_effects_digest = pending_certificate.expected_effects_digest;
         trace!(tx_digest = ?cert.digest(), "certificate ready");
