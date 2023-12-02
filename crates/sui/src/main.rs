@@ -33,7 +33,7 @@ const VERSION: &str = const_str::concat!(env!("CARGO_PKG_VERSION"), "-", GIT_REV
     version = VERSION,
     propagate_version = true,
 )]
-struct Args {
+pub struct Args {
     #[clap(subcommand)]
     command: SuiCommand,
 }
