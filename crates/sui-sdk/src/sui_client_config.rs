@@ -86,6 +86,14 @@ impl SuiEnv {
         Ok(builder.build(&self.rpc).await?)
     }
 
+    pub fn movement_devnet() -> Self {
+        Self {
+            alias: "movement-devnet".to_string(),
+            rpc: "https://sui.movementlabs.xyz".to_string(),
+            ws: None,
+        }
+    }
+
     pub fn devnet() -> Self {
         Self {
             alias: "devnet".to_string(),
