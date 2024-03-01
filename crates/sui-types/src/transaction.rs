@@ -10,19 +10,22 @@ use crate::crypto::{
     DefaultHash, Ed25519SuiSignature, EmptySignInfo, Signature, Signer, SuiSignatureInner,
     ToFromBytes,
 };
+use crate::digests::ConsensusCommitDigest;
 use crate::digests::{CertificateDigest, SenderSignedDataDigest};
 use crate::execution::SharedInput;
 use crate::message_envelope::{
     AuthenticatedMessage, Envelope, Message, TrustedEnvelope, VerifiedEnvelope,
 };
 use crate::messages_checkpoint::CheckpointTimestamp;
-use crate::messages_consensus::ConsensusCommitPrologue;
+use crate::messages_consensus::{ConsensusCommitPrologue, ConsensusCommitPrologueV2};
 use crate::object::{MoveObject, Object, Owner};
 use crate::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use crate::signature::{AuthenticatorTrait, GenericSignature, VerifyParams};
 use crate::{
-    SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION,
-    SUI_FRAMEWORK_PACKAGE_ID, SUI_SYSTEM_STATE_OBJECT_ID, SUI_SYSTEM_STATE_OBJECT_SHARED_VERSION,
+    SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_AUTHENTICATOR_STATE_OBJECT_SHARED_VERSION,
+    SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION, SUI_FRAMEWORK_PACKAGE_ID,
+    SUI_RANDOMNESS_STATE_OBJECT_ID, SUI_SYSTEM_STATE_OBJECT_ID,
+    SUI_SYSTEM_STATE_OBJECT_SHARED_VERSION,
 };
 use enum_dispatch::enum_dispatch;
 use fastcrypto::{encoding::Base64, hash::HashFunction};
@@ -30,11 +33,11 @@ use itertools::Either;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::{identifier::Identifier, language_storage::TypeTag};
+use nonempty::{nonempty, NonEmpty};
 use serde::{Deserialize, Serialize};
 use shared_crypto::intent::{Intent, IntentMessage, IntentScope};
 use std::fmt::Write;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     hash::Hash,
@@ -88,6 +91,11 @@ impl CallArg {
         initial_shared_version: SUI_CLOCK_OBJECT_SHARED_VERSION,
         mutable: true,
     });
+    pub const AUTHENTICATOR_MUT: Self = Self::Object(ObjectArg::SharedObject {
+        id: SUI_AUTHENTICATOR_STATE_OBJECT_ID,
+        initial_shared_version: SUI_AUTHENTICATOR_STATE_OBJECT_SHARED_VERSION,
+        mutable: true,
+    });
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -108,42 +116,45 @@ pub enum ObjectArg {
 fn type_tag_validity_check(
     tag: &TypeTag,
     config: &ProtocolConfig,
-    depth: u32,
-    starting_count: usize,
-) -> UserInputResult<usize> {
-    fp_ensure!(
-        depth < config.max_type_argument_depth(),
-        UserInputError::SizeLimitExceeded {
-            limit: "maximum type argument depth in a call transaction".to_string(),
-            value: config.max_type_argument_depth().to_string()
+    starting_count: &mut usize,
+) -> UserInputResult<()> {
+    let mut stack = vec![(tag, 1)];
+    while let Some((tag, depth)) = stack.pop() {
+        *starting_count += 1;
+        fp_ensure!(
+            *starting_count < config.max_type_arguments() as usize,
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum type arguments in a call transaction".to_string(),
+                value: config.max_type_arguments().to_string()
+            }
+        );
+        fp_ensure!(
+            depth < config.max_type_argument_depth(),
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum type argument depth in a call transaction".to_string(),
+                value: config.max_type_argument_depth().to_string()
+            }
+        );
+        match tag {
+            TypeTag::Bool
+            | TypeTag::U8
+            | TypeTag::U64
+            | TypeTag::U128
+            | TypeTag::Address
+            | TypeTag::Signer
+            | TypeTag::U16
+            | TypeTag::U32
+            | TypeTag::U256 => (),
+            TypeTag::Vector(t) => {
+                stack.push((t, depth + 1));
+            }
+            TypeTag::Struct(s) => {
+                let next_depth = depth + 1;
+                stack.extend(s.type_params.iter().map(|t| (t, next_depth)));
+            }
         }
-    );
-    let count = 1 + match tag {
-        TypeTag::Bool
-        | TypeTag::U8
-        | TypeTag::U64
-        | TypeTag::U128
-        | TypeTag::Address
-        | TypeTag::Signer
-        | TypeTag::U16
-        | TypeTag::U32
-        | TypeTag::U256 => 0,
-        TypeTag::Vector(t) => {
-            type_tag_validity_check(t.as_ref(), config, depth + 1, starting_count + 1)?
-        }
-        TypeTag::Struct(s) => s.type_params.iter().try_fold(0, |accum, t| {
-            let count = accum + type_tag_validity_check(t, config, depth + 1, starting_count + 1)?;
-            fp_ensure!(
-                count + starting_count < config.max_type_arguments() as usize,
-                UserInputError::SizeLimitExceeded {
-                    limit: "maximum type arguments in a call transaction".to_string(),
-                    value: config.max_type_arguments().to_string()
-                }
-            );
-            Ok(count)
-        })?,
-    };
-    Ok(count)
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -225,6 +236,26 @@ impl AuthenticatorStateUpdate {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct RandomnessStateUpdate {
+    /// Epoch of the randomness state update transaction
+    pub epoch: u64,
+    /// Randomness round of the update
+    pub randomness_round: u64,
+    /// Updated random bytes
+    pub random_bytes: Vec<u8>,
+    /// The initial version of the randomness object that it was shared at.
+    pub randomness_obj_initial_shared_version: SequenceNumber,
+    // to version this struct, do not add new fields. Instead, add a RandomnessStateUpdateV2 to
+    // TransactionKind.
+}
+
+impl RandomnessStateUpdate {
+    pub fn randomness_obj_initial_shared_version(&self) -> SequenceNumber {
+        self.randomness_obj_initial_shared_version
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, IntoStaticStr)]
 pub enum TransactionKind {
     /// A transaction that allows the interleaving of native commands and Move calls
@@ -248,6 +279,10 @@ pub enum TransactionKind {
     /// EndOfEpochTransaction replaces ChangeEpoch with a list of transactions that are allowed to
     /// run at the end of the epoch.
     EndOfEpochTransaction(Vec<EndOfEpochTransactionKind>),
+
+    RandomnessStateUpdate(RandomnessStateUpdate),
+    // V2 ConsensusCommitPrologue also includes the digest of the current consensus output.
+    ConsensusCommitPrologueV2(ConsensusCommitPrologueV2),
     // .. more transaction types go here
 }
 
@@ -257,6 +292,8 @@ pub enum EndOfEpochTransactionKind {
     ChangeEpoch(ChangeEpoch),
     AuthenticatorStateCreate,
     AuthenticatorStateExpire(AuthenticatorStateExpire),
+    RandomnessStateCreate,
+    DenyListStateCreate,
 }
 
 impl EndOfEpochTransactionKind {
@@ -296,6 +333,14 @@ impl EndOfEpochTransactionKind {
         Self::AuthenticatorStateCreate
     }
 
+    pub fn new_randomness_state_create() -> Self {
+        Self::RandomnessStateCreate
+    }
+
+    pub fn new_deny_list_state_create() -> Self {
+        Self::DenyListStateCreate
+    }
+
     fn input_objects(&self) -> Vec<InputObjectKind> {
         match self {
             Self::ChangeEpoch(_) => {
@@ -313,6 +358,8 @@ impl EndOfEpochTransactionKind {
                     mutable: true,
                 }]
             }
+            Self::RandomnessStateCreate => vec![],
+            Self::DenyListStateCreate => vec![],
         }
     }
 
@@ -325,6 +372,8 @@ impl EndOfEpochTransactionKind {
                 mutable: true,
             })),
             Self::AuthenticatorStateCreate => Either::Right(iter::empty()),
+            Self::RandomnessStateCreate => Either::Right(iter::empty()),
+            Self::DenyListStateCreate => Either::Right(iter::empty()),
         }
     }
 
@@ -334,6 +383,14 @@ impl EndOfEpochTransactionKind {
             Self::AuthenticatorStateCreate | Self::AuthenticatorStateExpire(_) => {
                 // Transaction should have been rejected earlier (or never formed).
                 assert!(config.enable_jwk_consensus_updates());
+            }
+            Self::RandomnessStateCreate => {
+                // Transaction should have been rejected earlier (or never formed).
+                assert!(config.random_beacon());
+            }
+            Self::DenyListStateCreate => {
+                // Transaction should have been rejected earlier (or never formed).
+                assert!(config.enable_coin_deny_list());
             }
         }
         Ok(())
@@ -376,6 +433,15 @@ impl VersionedProtocolMessage for TransactionKind {
                     })
                 }
             }
+            TransactionKind::RandomnessStateUpdate(_) => {
+                if protocol_config.random_beacon() {
+                    Ok(())
+                } else {
+                    Err(SuiError::UnsupportedFeatureError {
+                        error: "randomness state updates not enabled".to_string(),
+                    })
+                }
+            }
             TransactionKind::EndOfEpochTransaction(txns) => {
                 if !protocol_config.end_of_epoch_transaction_supported() {
                     Err(SuiError::UnsupportedFeatureError {
@@ -394,10 +460,33 @@ impl VersionedProtocolMessage for TransactionKind {
                                     });
                                 }
                             }
+                            EndOfEpochTransactionKind::RandomnessStateCreate => {
+                                if !protocol_config.random_beacon() {
+                                    return Err(SuiError::UnsupportedFeatureError {
+                                        error: "random beacon not enabled".to_string(),
+                                    });
+                                }
+                            }
+                            EndOfEpochTransactionKind::DenyListStateCreate => {
+                                if !protocol_config.enable_coin_deny_list() {
+                                    return Err(SuiError::UnsupportedFeatureError {
+                                        error: "coin deny list not enabled".to_string(),
+                                    });
+                                }
+                            }
                         }
                     }
 
                     Ok(())
+                }
+            }
+            TransactionKind::ConsensusCommitPrologueV2(_) => {
+                if protocol_config.include_consensus_digest_in_prologue() {
+                    Ok(())
+                } else {
+                    Err(SuiError::UnsupportedFeatureError {
+                        error: "ConsensusCommitPrologueV2 is not supported".to_string(),
+                    })
                 }
             }
         }
@@ -653,15 +742,8 @@ impl ProgrammableMoveCall {
         ));
         fp_ensure!(!is_blocked, UserInputError::BlockedMoveFunction);
         let mut type_arguments_count = 0;
-        for tag in self.type_arguments.iter() {
-            type_arguments_count += type_tag_validity_check(tag, config, 1, type_arguments_count)?;
-            fp_ensure!(
-                type_arguments_count < config.max_type_arguments() as usize,
-                UserInputError::SizeLimitExceeded {
-                    limit: "maximum type arguments in a call transaction".to_string(),
-                    value: config.max_type_arguments().to_string()
-                }
-            );
+        for tag in &self.type_arguments {
+            type_tag_validity_check(tag, config, &mut type_arguments_count)?;
         }
         fp_ensure!(
             self.arguments.len() < config.max_arguments() as usize,
@@ -753,14 +835,8 @@ impl Command {
                     UserInputError::EmptyCommandInput
                 );
                 if let Some(ty) = ty_opt {
-                    let type_arguments_count = type_tag_validity_check(ty, config, 1, 0)?;
-                    fp_ensure!(
-                        type_arguments_count < config.max_type_arguments() as usize,
-                        UserInputError::SizeLimitExceeded {
-                            limit: "maximum type arguments in a call transaction".to_string(),
-                            value: config.max_type_arguments().to_string()
-                        }
-                    );
+                    let mut type_arguments_count = 0;
+                    type_tag_validity_check(ty, config, &mut type_arguments_count)?;
                 }
                 fp_ensure!(
                     args.len() < config.max_arguments() as usize,
@@ -771,18 +847,7 @@ impl Command {
                     }
                 );
             }
-            Command::Publish(modules, _dep_ids) => {
-                fp_ensure!(!modules.is_empty(), UserInputError::EmptyCommandInput);
-                fp_ensure!(
-                    modules.len() < config.max_modules_in_publish() as usize,
-                    UserInputError::SizeLimitExceeded {
-                        limit: "maximum modules in a programmable transaction publish command"
-                            .to_string(),
-                        value: config.max_modules_in_publish().to_string()
-                    }
-                );
-            }
-            Command::Upgrade(modules, _, _, _) => {
+            Command::Publish(modules, _) | Command::Upgrade(modules, _, _, _) => {
                 fp_ensure!(!modules.is_empty(), UserInputError::EmptyCommandInput);
                 fp_ensure!(
                     modules.len() < config.max_modules_in_publish() as usize,
@@ -798,17 +863,18 @@ impl Command {
     }
 }
 
-fn write_sep<T: Display>(
+pub fn write_sep<T: Display>(
     f: &mut Formatter<'_>,
     items: impl IntoIterator<Item = T>,
     sep: &str,
 ) -> std::fmt::Result {
-    let mut xs = items.into_iter().peekable();
-    while let Some(x) = xs.next() {
-        if xs.peek().is_some() {
-            write!(f, "{sep}")?;
-        }
-        write!(f, "{x}")?;
+    let mut xs = items.into_iter();
+    let Some(x) = xs.next() else {
+        return Ok(());
+    };
+    write!(f, "{x}")?;
+    for x in xs {
+        write!(f, "{sep}{x}")?;
     }
     Ok(())
 }
@@ -853,18 +919,22 @@ impl ProgrammableTransaction {
                 value: config.max_programmable_tx_commands().to_string()
             }
         );
+        let total_inputs = self.input_objects()?.len() + self.receiving_objects().len();
+        fp_ensure!(
+            total_inputs <= config.max_input_objects() as usize,
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum input + receiving objects in a transaction".to_string(),
+                value: config.max_input_objects().to_string()
+            }
+        );
         for input in inputs {
             input.validity_check(config)?
         }
-        let mut publish_count = 0u64;
-        for command in commands {
-            command.validity_check(config)?;
-            match command {
-                Command::Publish(_, _) | Command::Upgrade(_, _, _, _) => publish_count += 1,
-                _ => (),
-            }
-        }
         if let Some(max_publish_commands) = config.max_publish_or_upgrade_per_ptb_as_option() {
+            let publish_count = commands
+                .iter()
+                .filter(|c| matches!(c, Command::Publish(_, _) | Command::Upgrade(_, _, _, _)))
+                .count() as u64;
             fp_ensure!(
                 publish_count <= max_publish_commands,
                 UserInputError::MaxPublishCountExceeded {
@@ -873,6 +943,10 @@ impl ProgrammableTransaction {
                 }
             );
         }
+        for command in commands {
+            command.validity_check(config)?;
+        }
+
         Ok(())
     }
 
@@ -1040,14 +1114,17 @@ impl TransactionKind {
     }
 
     pub fn is_system_tx(&self) -> bool {
-        matches!(
-            self,
+        // Keep this as an exhaustive match so that we can't forget to update it.
+        match self {
             TransactionKind::ChangeEpoch(_)
-                | TransactionKind::Genesis(_)
-                | TransactionKind::ConsensusCommitPrologue(_)
-                | TransactionKind::AuthenticatorStateUpdate(_)
-                | TransactionKind::EndOfEpochTransaction(_)
-        )
+            | TransactionKind::Genesis(_)
+            | TransactionKind::ConsensusCommitPrologue(_)
+            | TransactionKind::ConsensusCommitPrologueV2(_)
+            | TransactionKind::AuthenticatorStateUpdate(_)
+            | TransactionKind::RandomnessStateUpdate(_)
+            | TransactionKind::EndOfEpochTransaction(_) => true,
+            TransactionKind::ProgrammableTransaction(_) => false,
+        }
     }
 
     pub fn is_end_of_epoch_tx(&self) -> bool {
@@ -1090,7 +1167,7 @@ impl TransactionKind {
                 Either::Left(Either::Left(iter::once(SharedInputObject::SUI_SYSTEM_OBJ)))
             }
 
-            Self::ConsensusCommitPrologue(_) => {
+            Self::ConsensusCommitPrologue(_) | Self::ConsensusCommitPrologueV2(_) => {
                 Either::Left(Either::Left(iter::once(SharedInputObject {
                     id: SUI_CLOCK_OBJECT_ID,
                     initial_shared_version: SUI_CLOCK_OBJECT_SHARED_VERSION,
@@ -1101,6 +1178,13 @@ impl TransactionKind {
                 Either::Left(Either::Left(iter::once(SharedInputObject {
                     id: SUI_AUTHENTICATOR_STATE_OBJECT_ID,
                     initial_shared_version: update.authenticator_obj_initial_shared_version,
+                    mutable: true,
+                })))
+            }
+            Self::RandomnessStateUpdate(update) => {
+                Either::Left(Either::Left(iter::once(SharedInputObject {
+                    id: SUI_RANDOMNESS_STATE_OBJECT_ID,
+                    initial_shared_version: update.randomness_obj_initial_shared_version,
                     mutable: true,
                 })))
             }
@@ -1126,7 +1210,9 @@ impl TransactionKind {
             TransactionKind::ChangeEpoch(_)
             | TransactionKind::Genesis(_)
             | TransactionKind::ConsensusCommitPrologue(_)
+            | TransactionKind::ConsensusCommitPrologueV2(_)
             | TransactionKind::AuthenticatorStateUpdate(_)
+            | TransactionKind::RandomnessStateUpdate(_)
             | TransactionKind::EndOfEpochTransaction(_) => vec![],
             TransactionKind::ProgrammableTransaction(pt) => pt.receiving_objects(),
         }
@@ -1148,7 +1234,7 @@ impl TransactionKind {
             Self::Genesis(_) => {
                 vec![]
             }
-            Self::ConsensusCommitPrologue(_) => {
+            Self::ConsensusCommitPrologue(_) | Self::ConsensusCommitPrologueV2(_) => {
                 vec![InputObjectKind::SharedMoveObject {
                     id: SUI_CLOCK_OBJECT_ID,
                     initial_shared_version: SUI_CLOCK_OBJECT_SHARED_VERSION,
@@ -1159,6 +1245,13 @@ impl TransactionKind {
                 vec![InputObjectKind::SharedMoveObject {
                     id: SUI_AUTHENTICATOR_STATE_OBJECT_ID,
                     initial_shared_version: update.authenticator_obj_initial_shared_version(),
+                    mutable: true,
+                }]
+            }
+            Self::RandomnessStateUpdate(update) => {
+                vec![InputObjectKind::SharedMoveObject {
+                    id: SUI_RANDOMNESS_STATE_OBJECT_ID,
+                    initial_shared_version: update.randomness_obj_initial_shared_version(),
                     mutable: true,
                 }]
             }
@@ -1184,9 +1277,12 @@ impl TransactionKind {
     pub fn validity_check(&self, config: &ProtocolConfig) -> UserInputResult {
         match self {
             TransactionKind::ProgrammableTransaction(p) => p.validity_check(config)?,
+            // All transactiond kinds below are assumed to be system,
+            // and no validity or limit checks are performed.
             TransactionKind::ChangeEpoch(_)
             | TransactionKind::Genesis(_)
-            | TransactionKind::ConsensusCommitPrologue(_) => (),
+            | TransactionKind::ConsensusCommitPrologue(_)
+            | TransactionKind::ConsensusCommitPrologueV2(_) => (),
             TransactionKind::EndOfEpochTransaction(txns) => {
                 // The transaction should have been rejected earlier if the feature is not enabled.
                 assert!(config.end_of_epoch_transaction_supported());
@@ -1199,6 +1295,10 @@ impl TransactionKind {
             TransactionKind::AuthenticatorStateUpdate(_) => {
                 // The transaction should have been rejected earlier if the feature is not enabled.
                 assert!(config.enable_jwk_consensus_updates());
+            }
+            TransactionKind::RandomnessStateUpdate(_) => {
+                // The transaction should have been rejected earlier if the feature is not enabled.
+                assert!(config.random_beacon());
             }
         };
         Ok(())
@@ -1232,8 +1332,10 @@ impl TransactionKind {
             Self::ChangeEpoch(_) => "ChangeEpoch",
             Self::Genesis(_) => "Genesis",
             Self::ConsensusCommitPrologue(_) => "ConsensusCommitPrologue",
+            Self::ConsensusCommitPrologueV2(_) => "ConsensusCommitPrologueV2",
             Self::ProgrammableTransaction(_) => "ProgrammableTransaction",
             Self::AuthenticatorStateUpdate(_) => "AuthenticatorStateUpdate",
+            Self::RandomnessStateUpdate(_) => "RandomnessStateUpdate",
             Self::EndOfEpochTransaction(_) => "EndOfEpochTransaction",
         }
     }
@@ -1258,12 +1360,20 @@ impl Display for TransactionKind {
                 writeln!(writer, "Transaction Kind : Consensus Commit Prologue")?;
                 writeln!(writer, "Timestamp : {}", p.commit_timestamp_ms)?;
             }
+            Self::ConsensusCommitPrologueV2(p) => {
+                writeln!(writer, "Transaction Kind : Consensus Commit Prologue V2")?;
+                writeln!(writer, "Timestamp : {}", p.commit_timestamp_ms)?;
+                writeln!(writer, "Consensus Digest: {}", p.consensus_commit_digest)?;
+            }
             Self::ProgrammableTransaction(p) => {
                 writeln!(writer, "Transaction Kind : Programmable")?;
                 write!(writer, "{p}")?;
             }
             Self::AuthenticatorStateUpdate(_) => {
                 writeln!(writer, "Transaction Kind : Authenticator State Update")?;
+            }
+            Self::RandomnessStateUpdate(_) => {
+                writeln!(writer, "Transaction Kind : Randomness State Update")?;
             }
             Self::EndOfEpochTransaction(_) => {
                 writeln!(writer, "Transaction Kind : End of Epoch Transaction")?;
@@ -1727,7 +1837,7 @@ pub trait TransactionDataAPI {
     fn into_kind(self) -> TransactionKind;
 
     /// Transaction signer and Gas owner
-    fn signers(&self) -> Vec<SuiAddress>;
+    fn signers(&self) -> NonEmpty<SuiAddress>;
 
     fn gas_data(&self) -> &GasData;
 
@@ -1768,10 +1878,8 @@ pub trait TransactionDataAPI {
     /// Check if the transaction is sponsored (namely gas owner != sender)
     fn is_sponsored_tx(&self) -> bool;
 
-    #[cfg(test)]
-    fn sender_mut(&mut self) -> &mut SuiAddress;
+    fn sender_mut_for_testing(&mut self) -> &mut SuiAddress;
 
-    #[cfg(test)]
     fn gas_data_mut(&mut self) -> &mut GasData;
 
     // This should be used in testing only.
@@ -1796,8 +1904,8 @@ impl TransactionDataAPI for TransactionDataV1 {
     }
 
     /// Transaction signer and Gas owner
-    fn signers(&self) -> Vec<SuiAddress> {
-        let mut signers = vec![self.sender];
+    fn signers(&self) -> NonEmpty<SuiAddress> {
+        let mut signers = nonempty![self.sender];
         if self.gas_owner() != self.sender {
             signers.push(self.gas_owner());
         }
@@ -1908,12 +2016,10 @@ impl TransactionDataAPI for TransactionDataV1 {
         matches!(self.kind, TransactionKind::Genesis(_))
     }
 
-    #[cfg(test)]
-    fn sender_mut(&mut self) -> &mut SuiAddress {
+    fn sender_mut_for_testing(&mut self) -> &mut SuiAddress {
         &mut self.sender
     }
 
-    #[cfg(test)]
     fn gas_data_mut(&mut self) -> &mut GasData {
         &mut self.gas_data
     }
@@ -1960,11 +2066,15 @@ impl SenderSignedData {
         }])
     }
 
+    pub fn inner_vec_mut_for_testing(&mut self) -> &mut Vec<SenderSignedTransaction> {
+        &mut self.0
+    }
+
     pub fn inner(&self) -> &SenderSignedTransaction {
         // assert is safe - SenderSignedTransaction::verify ensures length is 1.
         assert_eq!(self.0.len(), 1);
         self.0
-            .get(0)
+            .first()
             .expect("SenderSignedData must contain exactly one transaction")
     }
 
@@ -1989,9 +2099,9 @@ impl SenderSignedData {
         let mut mapping = BTreeMap::new();
         for sig in &self.inner().tx_signatures {
             if verify_legacy_zklogin_address {
-                // Try deriving the address from the legacy way.
+                // Try deriving the address from the legacy padded way.
                 if let GenericSignature::ZkLoginAuthenticator(z) = sig {
-                    mapping.insert(SuiAddress::legacy_try_from(z)?, sig);
+                    mapping.insert(SuiAddress::try_from_padded(&z.inputs)?, sig);
                 };
             }
             let address = sig.try_into()?;
@@ -2038,6 +2148,44 @@ impl SenderSignedData {
         let hash = digest.finalize();
         SenderSignedDataDigest::new(hash.into())
     }
+
+    pub fn serialized_size(&self) -> SuiResult<usize> {
+        bcs::serialized_size(self).map_err(|e| SuiError::TransactionSerializationError {
+            error: e.to_string(),
+        })
+    }
+
+    /// Perform cheap validity checks on the sender signed transaction, including its size,
+    /// input count, command count, etc.
+    pub fn validity_check(&self, config: &ProtocolConfig) -> SuiResult {
+        // Enforce overall transaction size limit.
+        let tx_size = self.serialized_size()?;
+        let max_tx_size_bytes = config.max_tx_size_bytes();
+
+        fp_ensure!(
+            tx_size as u64 <= max_tx_size_bytes,
+            SuiError::UserInputError {
+                error: UserInputError::SizeLimitExceeded {
+                    limit: format!(
+                        "serialized transaction size exceeded maximum of {max_tx_size_bytes}"
+                    ),
+                    value: tx_size.to_string(),
+                }
+            }
+        );
+
+        self.verify_user_input()?;
+
+        let tx_data = self.transaction_data();
+        tx_data
+            .check_version_supported(config)
+            .map_err(Into::<SuiError>::into)?;
+        tx_data
+            .validity_check(config)
+            .map_err(Into::<SuiError>::into)?;
+
+        Ok(())
+    }
 }
 
 impl VersionedProtocolMessage for SenderSignedData {
@@ -2081,6 +2229,51 @@ impl Message for SenderSignedData {
         TransactionDigest::new(default_hash(&self.intent_message().value))
     }
 
+    fn verify_user_input(&self) -> SuiResult {
+        fp_ensure!(
+            self.0.len() == 1,
+            SuiError::UserInputError {
+                error: UserInputError::Unsupported(
+                    "SenderSignedData must contain exactly one transaction".to_string()
+                )
+            }
+        );
+        let tx_data = &self.intent_message().value;
+        fp_ensure!(
+            !tx_data.is_system_tx(),
+            SuiError::UserInputError {
+                error: UserInputError::Unsupported(
+                    "SenderSignedData must not contain system transaction".to_string()
+                )
+            }
+        );
+
+        // Verify signatures are well formed. Steps are ordered in asc complexity order
+        // to minimize abuse.
+        let signers = self.intent_message().value.signers();
+        // Signature number needs to match
+        fp_ensure!(
+            self.inner().tx_signatures.len() == signers.len(),
+            SuiError::SignerSignatureNumberMismatch {
+                actual: self.inner().tx_signatures.len(),
+                expected: signers.len()
+            }
+        );
+
+        // All required signers need to be sign.
+        let present_sigs = self.get_signer_sig_mapping(true)?;
+        for s in signers {
+            if !present_sigs.contains_key(&s) {
+                return Err(SuiError::SignerSignatureAbsent {
+                    expected: s.to_string(),
+                    actual: present_sigs.keys().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_epoch(&self, epoch: EpochId) -> SuiResult {
         for sig in &self.inner().tx_signatures {
             sig.verify_user_authenticator_epoch(epoch)?;
@@ -2100,6 +2293,7 @@ impl AuthenticatedMessage for SenderSignedData {
         }
         Ok(())
     }
+
     fn verify_message_signature(&self, verify_params: &VerifyParams) -> SuiResult {
         fp_ensure!(
             self.0.len() == 1,
@@ -2177,24 +2371,21 @@ impl<S> Envelope<SenderSignedData, S> {
 impl Transaction {
     pub fn from_data_and_signer(
         data: TransactionData,
-        intent: Intent,
         signers: Vec<&dyn Signer<Signature>>,
     ) -> Self {
-        let intent_msg = IntentMessage::new(intent.clone(), data.clone());
-        let mut signatures = Vec::with_capacity(signers.len());
-        for signer in signers {
-            signatures.push(Signature::new_secure(&intent_msg, signer));
-        }
-        Self::from_data(data, intent, signatures)
+        let signatures = {
+            let intent_msg = IntentMessage::new(Intent::sui_transaction(), &data);
+            signers
+                .into_iter()
+                .map(|s| Signature::new_secure(&intent_msg, s))
+                .collect()
+        };
+        Self::from_data(data, signatures)
     }
 
     // TODO: Rename this function and above to make it clearer.
-    pub fn from_data(data: TransactionData, intent: Intent, signatures: Vec<Signature>) -> Self {
-        Self::from_generic_sig_data(
-            data,
-            intent,
-            signatures.into_iter().map(|s| s.into()).collect(),
-        )
+    pub fn from_data(data: TransactionData, signatures: Vec<Signature>) -> Self {
+        Self::from_generic_sig_data(data, signatures.into_iter().map(|s| s.into()).collect())
     }
 
     pub fn signature_from_signer(
@@ -2206,12 +2397,12 @@ impl Transaction {
         Signature::new_secure(&intent_msg, signer)
     }
 
-    pub fn from_generic_sig_data(
-        data: TransactionData,
-        intent: Intent,
-        signatures: Vec<GenericSignature>,
-    ) -> Self {
-        Self::new(SenderSignedData::new(data, intent, signatures))
+    pub fn from_generic_sig_data(data: TransactionData, signatures: Vec<GenericSignature>) -> Self {
+        Self::new(SenderSignedData::new(
+            data,
+            Intent::sui_transaction(),
+            signatures,
+        ))
     }
 
     /// Returns the Base64 encoded tx_bytes
@@ -2274,6 +2465,22 @@ impl VerifiedTransaction {
         .pipe(Self::new_system_transaction)
     }
 
+    pub fn new_consensus_commit_prologue_v2(
+        epoch: u64,
+        round: u64,
+        commit_timestamp_ms: CheckpointTimestamp,
+        consensus_commit_digest: ConsensusCommitDigest,
+    ) -> Self {
+        ConsensusCommitPrologueV2 {
+            epoch,
+            round,
+            commit_timestamp_ms,
+            consensus_commit_digest,
+        }
+        .pipe(TransactionKind::ConsensusCommitPrologueV2)
+        .pipe(Self::new_system_transaction)
+    }
+
     pub fn new_authenticator_state_update(
         epoch: u64,
         round: u64,
@@ -2287,6 +2494,22 @@ impl VerifiedTransaction {
             authenticator_obj_initial_shared_version,
         }
         .pipe(TransactionKind::AuthenticatorStateUpdate)
+        .pipe(Self::new_system_transaction)
+    }
+
+    pub fn new_randomness_state_update(
+        epoch: u64,
+        randomness_round: u64,
+        random_bytes: Vec<u8>,
+        randomness_obj_initial_shared_version: SequenceNumber,
+    ) -> Self {
+        RandomnessStateUpdate {
+            epoch,
+            randomness_round,
+            random_bytes,
+            randomness_obj_initial_shared_version,
+        }
+        .pipe(TransactionKind::RandomnessStateUpdate)
         .pipe(Self::new_system_transaction)
     }
 
@@ -2436,7 +2659,7 @@ pub struct ObjectReadResult {
 
 #[derive(Clone, Debug)]
 pub enum ObjectReadResultKind {
-    Object(Arc<Object>),
+    Object(Object),
     // The version of the object that the transaction intended to read, and the digest of the tx
     // that deleted it.
     DeletedSharedObject(SequenceNumber, TransactionDigest),
@@ -2444,12 +2667,6 @@ pub enum ObjectReadResultKind {
 
 impl From<Object> for ObjectReadResultKind {
     fn from(object: Object) -> Self {
-        Self::Object(Arc::new(object))
-    }
-}
-
-impl From<Arc<Object>> for ObjectReadResultKind {
-    fn from(object: Arc<Object>) -> Self {
         Self::Object(object)
     }
 }
@@ -2474,7 +2691,7 @@ impl ObjectReadResult {
         self.input_object_kind.object_id()
     }
 
-    pub fn as_object(&self) -> Option<&Arc<Object>> {
+    pub fn as_object(&self) -> Option<&Object> {
         match &self.object {
             ObjectReadResultKind::Object(object) => Some(object),
             ObjectReadResultKind::DeletedSharedObject(_, _) => None,
@@ -2485,7 +2702,7 @@ impl ObjectReadResult {
         let objref = gas.compute_object_reference();
         Self {
             input_object_kind: InputObjectKind::ImmOrOwnedMoveObject(objref),
-            object: ObjectReadResultKind::Object(Arc::new(gas.clone())),
+            object: ObjectReadResultKind::Object(gas.clone()),
         }
     }
 
@@ -2735,7 +2952,7 @@ impl InputObjects {
         )
     }
 
-    pub fn into_object_map(self) -> BTreeMap<ObjectID, Arc<Object>> {
+    pub fn into_object_map(self) -> BTreeMap<ObjectID, Object> {
         self.objects
             .into_iter()
             .filter_map(|o| o.as_object().map(|object| (o.id(), object.clone())))
@@ -2749,6 +2966,10 @@ impl InputObjects {
     pub fn iter(&self) -> impl Iterator<Item = &ObjectReadResult> {
         self.objects.iter()
     }
+
+    pub fn iter_objects(&self) -> impl Iterator<Item = &Object> {
+        self.objects.iter().filter_map(|o| o.as_object())
+    }
 }
 
 // Result of attempting to read a receiving object (currently only at signing time).
@@ -2756,13 +2977,13 @@ impl InputObjects {
 // ReceivingObjectReadResultKind::PreviouslyReceivedObject.
 #[derive(Clone, Debug)]
 pub enum ReceivingObjectReadResultKind {
-    Object(Arc<Object>),
+    Object(Object),
     // The object was received by some other transaction, and we were not able to read it
     PreviouslyReceivedObject,
 }
 
 impl ReceivingObjectReadResultKind {
-    pub fn as_object(&self) -> Option<&Arc<Object>> {
+    pub fn as_object(&self) -> Option<&Object> {
         match &self {
             Self::Object(object) => Some(object),
             Self::PreviouslyReceivedObject => None,
@@ -2790,7 +3011,7 @@ impl ReceivingObjectReadResult {
 
 impl From<Object> for ReceivingObjectReadResultKind {
     fn from(object: Object) -> Self {
-        Self::Object(Arc::new(object))
+        Self::Object(object)
     }
 }
 
@@ -2801,6 +3022,10 @@ pub struct ReceivingObjects {
 impl ReceivingObjects {
     pub fn iter(&self) -> impl Iterator<Item = &ReceivingObjectReadResult> {
         self.objects.iter()
+    }
+
+    pub fn iter_objects(&self) -> impl Iterator<Item = &Object> {
+        self.objects.iter().filter_map(|o| o.object.as_object())
     }
 }
 

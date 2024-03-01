@@ -1,5 +1,77 @@
 # @mysten/kiosk
 
+## 0.8.3
+
+### Patch Changes
+
+- 4830361fa4: Updated typescript version
+- Updated dependencies [4830361fa4]
+  - @mysten/sui.js@0.50.1
+
+## 0.8.2
+
+### Patch Changes
+
+- a3971c3524: Fixes `lock` function arguments. `itemId` is replaced by `item`, which accepts an ObjectArgument instead of a string. `itemId` is still supported but deprecated, and will be removed in future versions.
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [c08e3569ef]
+- Updated dependencies [9a14e61db4]
+- Updated dependencies [13e922d9b1]
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [220a766d86]
+  - @mysten/sui.js@0.50.0
+
+## 0.8.1
+
+### Patch Changes
+
+- 9ac0a4ec01: Add extensions to all sdk import paths
+- Updated dependencies [9ac0a4ec01]
+  - @mysten/sui.js@0.49.1
+
+## 0.8.0
+
+### Minor Changes
+
+- e5f9e3ba21: Replace tsup based build to fix issues with esm/cjs dual publishing
+
+### Patch Changes
+
+- Updated dependencies [e5f9e3ba21]
+  - @mysten/sui.js@0.49.0
+
+## 0.7.13
+
+### Patch Changes
+
+- dd362ec1d6: Update docs url to sdk.mystenlabs.com
+- Updated dependencies [dd362ec1d6]
+  - @mysten/sui.js@0.48.1
+
+## 0.7.12
+
+### Patch Changes
+
+- Updated dependencies [cdcfa76c43]
+  - @mysten/sui.js@0.48.0
+
+## 0.7.11
+
+### Patch Changes
+
+- Updated dependencies [194c980cb]
+- Updated dependencies [9ac7e2f3d]
+- Updated dependencies [0259aec82]
+- Updated dependencies [64d45ba27]
+  - @mysten/sui.js@0.47.0
+
+## 0.7.10
+
+### Patch Changes
+
+- Updated dependencies [652bcdd92]
+  - @mysten/sui.js@0.46.1
+
 ## 0.7.9
 
 ### Patch Changes
@@ -80,7 +152,7 @@
 
 ### Minor Changes
 
-- 5ee8c24f1: Introduces BREAKING CHANGES. Migration guide and explanation: https://sui-typescript-docs.vercel.app/kiosk/from-v1
+- 5ee8c24f1: Introduces BREAKING CHANGES. Migration guide and explanation: https://sdk.mystenlabs.com/kiosk/from-v1
 
 ## 0.6.0
 

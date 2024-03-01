@@ -62,7 +62,7 @@ module examples::gem {
     const LARGE_BUNDLE: u64 = 1_000_000_000_000;
     const LARGE_AMOUNT: u64 = 100_000;
 
-    #[lint_allow(coin_field)]
+    #[allow(lint(coin_field))]
     /// Gems can be purchased through the `Store`.
     struct GemStore has key {
         id: UID,
@@ -85,7 +85,7 @@ module examples::gem {
         );
 
         // create a `TokenPolicy` for GEMs
-        let (policy, cap) = token::new(&treasury_cap, ctx);
+        let (policy, cap) = token::new_policy(&treasury_cap, ctx);
 
         token::allow(&mut policy, &cap, buy_action(), ctx);
         token::allow(&mut policy, &cap, token::spend_action(), ctx);

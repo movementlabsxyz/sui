@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { BcsTypeOptions } from './bcs-type.js';
 import {
 	BcsType,
-	BcsTypeOptions,
 	bigUIntBcsType,
 	dynamicSizeBcsType,
 	fixedSizeBcsType,
@@ -11,7 +11,7 @@ import {
 	stringLikeBcsType,
 	uIntBcsType,
 } from './bcs-type.js';
-import { GenericPlaceholder, ReplaceBcsGenerics } from './types.js';
+import type { GenericPlaceholder, ReplaceBcsGenerics } from './types.js';
 import { ulebEncode } from './uleb.js';
 
 export const bcs = {
@@ -549,17 +549,21 @@ export const bcs = {
 	},
 
 	/**
-	 * Creates a helper function representing a generic type. This method returns
-	 * a function that can be used to create concrete version of the generic type.
-	 * @param names The names of the generic parameters
-	 * @param cb A callback that returns the generic type
-	 * @example
-	 * const MyStruct = bcs.generic(['T'], (T) => bcs.struct('MyStruct', { inner: T }))
-	 * MyStruct(bcs.u8()).serialize({ inner: 1 }).toBytes() // Uint8Array [ 1 ]
-	 * MyStruct(bcs.string()).serialize({ inner: 'a' }).toBytes() // Uint8Array [ 1, 97 ]
+	 * @deprecated
+	 *
+	 * Generics should be implemented as generic typescript functions instead:
+	 *
+	 * ```ts
+	 * function VecMap<K, V>, (K: BcsType<K>, V: BcsType<V>) {
+	 *   return bcs.struct('VecMap<K, V>', {
+	 *     keys: bcs.vector(K),
+	 *     values: bcs.vector(V),
+	 *   })
+	 * }
+	 * ```
 	 */
 	generic<const Names extends readonly string[], const Type extends BcsType<any>>(
-		names: Names,
+		_names: Names,
 		cb: (...types: { [K in keyof Names]: BcsType<GenericPlaceholder<Names[K]>> }) => Type,
 	): <T extends { [K in keyof Names]: BcsType<any> }>(
 		...types: T

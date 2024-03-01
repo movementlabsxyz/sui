@@ -1,5 +1,80 @@
 # @mysten/deepbook
 
+## 0.7.1
+
+### Patch Changes
+
+- 4830361fa4: Updated typescript version
+- Updated dependencies [4830361fa4]
+  - @mysten/sui.js@0.50.1
+
+## 0.7.0
+
+### Minor Changes
+
+- b8fe02be26: GetLevel2BookStatus method of deepbook can retrieve both ask and bid side in a single call, if input argument is equal to 'both'.
+
+### Patch Changes
+
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [c08e3569ef]
+- Updated dependencies [9a14e61db4]
+- Updated dependencies [13e922d9b1]
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [220a766d86]
+  - @mysten/sui.js@0.50.0
+
+## 0.6.1
+
+### Patch Changes
+
+- 9ac0a4ec01: Add extensions to all sdk import paths
+- Updated dependencies [9ac0a4ec01]
+  - @mysten/sui.js@0.49.1
+
+## 0.6.0
+
+### Minor Changes
+
+- 950d50f2cf: Changed getCoinType function to public so that it is testable
+- e5f9e3ba21: Replace tsup based build to fix issues with esm/cjs dual publishing
+
+### Patch Changes
+
+- Updated dependencies [e5f9e3ba21]
+  - @mysten/sui.js@0.49.0
+
+## 0.5.12
+
+### Patch Changes
+
+- Updated dependencies [dd362ec1d6]
+  - @mysten/sui.js@0.48.1
+
+## 0.5.11
+
+### Patch Changes
+
+- Updated dependencies [cdcfa76c43]
+  - @mysten/sui.js@0.48.0
+
+## 0.5.10
+
+### Patch Changes
+
+- Updated dependencies [194c980cb]
+- Updated dependencies [9ac7e2f3d]
+- Updated dependencies [0259aec82]
+- Updated dependencies [64d45ba27]
+  - @mysten/sui.js@0.47.0
+
+## 0.5.9
+
+### Patch Changes
+
+- Updated dependencies [652bcdd92]
+  - @mysten/sui.js@0.46.1
+
 ## 0.5.8
 
 ### Patch Changes

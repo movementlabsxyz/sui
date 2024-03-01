@@ -29,7 +29,7 @@ mod checked {
     use sui_types::gas::SuiGasStatus;
     use sui_types::gas_coin::GAS;
     use sui_types::inner_temporary_store::InnerTemporaryStore;
-    use sui_types::messages_consensus::ConsensusCommitPrologue;
+    use sui_types::messages_checkpoint::CheckpointTimestamp;
     use sui_types::metrics::LimitsMetrics;
     use sui_types::object::OBJECT_START_VERSION;
     use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
@@ -45,7 +45,7 @@ mod checked {
     };
     use sui_types::{
         base_types::{ObjectRef, SuiAddress, TransactionDigest, TxContext},
-        object::Object,
+        object::{Object, ObjectInner},
         sui_system_state::{ADVANCE_EPOCH_FUNCTION_NAME, SUI_SYSTEM_MODULE_NAME},
         SUI_FRAMEWORK_ADDRESS,
     };
@@ -70,6 +70,7 @@ mod checked {
         certificate_deny_set: &HashSet<TransactionDigest>,
     ) -> (
         InnerTemporaryStore,
+        SuiGasStatus,
         TransactionEffects,
         Result<Mode::ExecutionResults, ExecutionError>,
     ) {
@@ -158,7 +159,7 @@ mod checked {
         );
 
         // Remove from dependencies the generic hash
-        transaction_dependencies.remove(&TransactionDigest::genesis());
+        transaction_dependencies.remove(&TransactionDigest::genesis_marker());
 
         if enable_expensive_checks && !Mode::allow_arbitrary_function_calls() {
             temporary_store
@@ -175,7 +176,12 @@ mod checked {
             &mut gas_charger,
             *epoch_id,
         );
-        (inner, effects, execution_result)
+        (
+            inner,
+            gas_charger.into_gas_status(),
+            effects,
+            execution_result,
+        )
     }
 
     pub fn execute_genesis_state_update(
@@ -410,13 +416,13 @@ mod checked {
                 for genesis_object in objects {
                     match genesis_object {
                         sui_types::transaction::GenesisObject::RawObject { data, owner } => {
-                            let object = Object {
+                            let object = ObjectInner {
                                 data,
                                 owner,
                                 previous_transaction: tx_ctx.digest(),
                                 storage_rebate: 0,
                             };
-                            temporary_store.write_object(object, WriteKind::Create);
+                            temporary_store.write_object(object.into(), WriteKind::Create);
                         }
                     }
                 }
@@ -424,7 +430,20 @@ mod checked {
             }
             TransactionKind::ConsensusCommitPrologue(prologue) => {
                 setup_consensus_commit(
-                    prologue,
+                    prologue.commit_timestamp_ms,
+                    temporary_store,
+                    tx_ctx,
+                    move_vm,
+                    gas_charger,
+                    protocol_config,
+                    metrics,
+                )
+                .expect("ConsensusCommitPrologue cannot fail");
+                Ok(Mode::empty_results())
+            }
+            TransactionKind::ConsensusCommitPrologueV2(prologue) => {
+                setup_consensus_commit(
+                    prologue.commit_timestamp_ms,
                     temporary_store,
                     tx_ctx,
                     move_vm,
@@ -447,10 +466,13 @@ mod checked {
                 )
             }
             TransactionKind::AuthenticatorStateUpdate(_) => {
-                panic!("AuthenticatorStateUpdate should not exist in suivm");
+                panic!("AuthenticatorStateUpdate should not exist in execution layer v0");
+            }
+            TransactionKind::RandomnessStateUpdate(_) => {
+                panic!("RandomnessStateUpdate should not exist in execution layer v0");
             }
             TransactionKind::EndOfEpochTransaction(_) => {
-                panic!("EndOfEpochTransaction should not exist in suivm");
+                panic!("EndOfEpochTransaction should not exist in execution layer v0");
             }
         }
     }
@@ -721,7 +743,7 @@ mod checked {
     /// - Set the timestamp for the `Clock` shared object from the timestamp in the header from
     ///   consensus.
     fn setup_consensus_commit(
-        prologue: ConsensusCommitPrologue,
+        consensus_commit_timestamp_ms: CheckpointTimestamp,
         temporary_store: &mut TemporaryStore<'_>,
         tx_ctx: &mut TxContext,
         move_vm: &Arc<MoveVM>,
@@ -738,7 +760,7 @@ mod checked {
                 vec![],
                 vec![
                     CallArg::CLOCK_MUT,
-                    CallArg::Pure(bcs::to_bytes(&prologue.commit_timestamp_ms).unwrap()),
+                    CallArg::Pure(bcs::to_bytes(&consensus_commit_timestamp_ms).unwrap()),
                 ],
             );
             assert_invariant!(

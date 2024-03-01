@@ -27,8 +27,6 @@ use move_core_types::{
     vm_status::StatusCode,
 };
 use move_vm_config::runtime::VMConfig;
-#[cfg(debug_assertions)]
-use move_vm_profiler::GasProfiler;
 use move_vm_types::{
     data_store::DataStore,
     gas::GasMeter,
@@ -442,44 +440,6 @@ impl VMRuntime {
         )
     }
 
-    // See Session::execute_script for what contracts to follow.
-    pub(crate) fn execute_script(
-        &self,
-        script: impl Borrow<[u8]>,
-        type_arguments: Vec<Type>,
-        serialized_args: Vec<impl Borrow<[u8]>>,
-        data_store: &mut impl DataStore,
-        gas_meter: &mut impl GasMeter,
-        extensions: &mut NativeContextExtensions,
-    ) -> VMResult<SerializedReturnValues> {
-        // load the script, perform verification
-        let (
-            func,
-            LoadedFunctionInstantiation {
-                parameters,
-                return_,
-            },
-        ) = self
-            .loader
-            .load_script(script.borrow(), &type_arguments, data_store)?;
-        #[cfg(debug_assertions)]
-        {
-            let rem = gas_meter.remaining_gas().into();
-            gas_meter.set_profiler(GasProfiler::init_default_cfg(func.pretty_string(), rem));
-        }
-        // execute the function
-        self.execute_function_impl(
-            func,
-            type_arguments,
-            parameters,
-            return_,
-            serialized_args,
-            data_store,
-            gas_meter,
-            extensions,
-        )
-    }
-
     pub(crate) fn loader(&self) -> &Loader {
         &self.loader
     }
@@ -526,8 +486,8 @@ impl VMRuntime {
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
     ) -> VMResult<SerializedReturnValues> {
-        #[cfg(debug_assertions)]
-        {
+        move_vm_profiler::gas_profiler_feature_enabled! {
+            use move_vm_profiler::GasProfiler;
             if gas_meter.get_profiler_mut().is_none() {
                 gas_meter.set_profiler(GasProfiler::init_default_cfg(
                     function_name.to_string(),

@@ -15,6 +15,10 @@ import {
 	useCoinsReFetchingConfig,
 	useSortedCoinsByCategories,
 } from '_hooks';
+import {
+	DELEGATED_STAKES_QUERY_REFETCH_INTERVAL,
+	DELEGATED_STAKES_QUERY_STALE_TIME,
+} from '_shared/constants';
 import { ampli } from '_src/shared/analytics/ampli';
 import { API_ENV } from '_src/shared/api-env';
 import { FEATURES } from '_src/shared/experimentation/features';
@@ -25,7 +29,14 @@ import { usePinnedCoinTypes } from '_src/ui/app/hooks/usePinnedCoinTypes';
 import FaucetRequestButton from '_src/ui/app/shared/faucet/FaucetRequestButton';
 import PageTitle from '_src/ui/app/shared/PageTitle';
 import { useFeature } from '@growthbook/growthbook-react';
-import { useAppsBackend, useCoinMetadata, useFormatCoin, useResolveSuiNSName } from '@mysten/core';
+import {
+	useAppsBackend,
+	useBalanceInUSD,
+	useCoinMetadata,
+	useFormatCoin,
+	useGetDelegatedStake,
+	useResolveSuiNSName,
+} from '@mysten/core';
 import { useSuiClientQuery } from '@mysten/dapp-kit';
 import { Info12, Pin16, Unpin16 } from '@mysten/icons';
 import { type CoinBalance as CoinBalanceType } from '@mysten/sui.js/client';
@@ -41,7 +52,6 @@ import { PortfolioName } from './PortfolioName';
 import { TokenIconLink } from './TokenIconLink';
 import { TokenLink } from './TokenLink';
 import { TokenList } from './TokenList';
-import SvgSuiTokensStack from './TokensStackIcon';
 
 type TokenDetailsProps = {
 	coinType?: string;
@@ -104,6 +114,8 @@ export function TokenRow({
 		type: coinBalance.coinType,
 	});
 	const allowedSwapCoinsList = useAllowedSwapCoinsList();
+
+	const balanceInUsd = useBalanceInUSD(coinBalance.coinType, coinBalance.totalBalance);
 
 	const isRenderSwapButton = allowedSwapCoinsList.includes(coinType);
 
@@ -173,10 +185,19 @@ export function TokenRow({
 				</div>
 			</div>
 
-			<div className="ml-auto flex flex-col items-end gap-1.5">
+			<div className="ml-auto flex flex-col items-end gap-1">
 				{balance > 0n && (
 					<Text variant="body" color="gray-90" weight="medium">
 						{formatted} {symbol}
+					</Text>
+				)}
+
+				{balanceInUsd && balanceInUsd > 0 && (
+					<Text variant="subtitle" color="steel-dark" weight="medium">
+						{Number(balanceInUsd).toLocaleString('en', {
+							style: 'currency',
+							currency: 'USD',
+						})}
 					</Text>
 				)}
 			</div>
@@ -304,6 +325,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 	);
 
 	const { apiEnv } = useAppSelector((state) => state.app);
+	const isMainnet = apiEnv === API_ENV.mainnet;
 	const { request } = useAppsBackend();
 	const { data } = useQuery({
 		queryKey: ['apps-backend', 'monitor-network'],
@@ -314,7 +336,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 		// Keep cached for 2 minutes:
 		staleTime: 2 * 60 * 1000,
 		retry: false,
-		enabled: apiEnv === API_ENV.mainnet,
+		enabled: isMainnet,
 	});
 
 	const {
@@ -331,6 +353,12 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 			select: filterAndSortTokenBalances,
 		},
 	);
+
+	const { data: delegatedStake } = useGetDelegatedStake({
+		address: activeAccountAddress || '',
+		staleTime: DELEGATED_STAKES_QUERY_STALE_TIME,
+		refetchInterval: DELEGATED_STAKES_QUERY_REFETCH_INTERVAL,
+	});
 
 	const walletInterstitialConfig = useFeature<InterstitialConfig>(
 		FEATURES.WALLET_INTERSTITIAL_CONFIG,
@@ -375,7 +403,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 	}
 	return (
 		<>
-			{apiEnv === API_ENV.mainnet && data?.degraded && (
+			{isMainnet && data?.degraded && (
 				<div className="rounded-2xl bg-warning-light border border-solid border-warning-dark/20 text-warning-dark flex items-center py-2 px-3 mb-4">
 					<Info12 className="shrink-0" />
 					<div className="ml-2">
@@ -408,23 +436,22 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 										isDefiWalletEnabled ? 'bg-gradients-graph-cards' : 'bg-hero/5',
 									)}
 								>
-									{accountHasSui ? (
-										<div className="flex flex-col gap-1 items-center">
-											<CoinBalance amount={tokenBalance} type={activeCoinType} />
-										</div>
-									) : (
+									<div className="flex flex-col gap-1 items-center">
+										<CoinBalance amount={tokenBalance} type={activeCoinType} />
+									</div>
+
+									{!accountHasSui ? (
 										<div className="flex flex-col gap-5">
 											<div className="flex flex-col flex-nowrap justify-center items-center text-center px-2.5">
-												<SvgSuiTokensStack className="h-14 w-14 text-steel" />
-												<div className="flex flex-col gap-2 justify-center">
-													<Text variant="pBodySmall" color="gray-80" weight="normal">
-														To send transactions on the Sui network, you need SUI in your wallet.
-													</Text>
-												</div>
+												<Text variant="pBodySmall" color="gray-80" weight="normal">
+													{isMainnet
+														? 'Buy SUI to get started'
+														: 'To send transactions on the Sui network, you need SUI in your wallet.'}
+												</Text>
 											</div>
 											<FaucetRequestButton />
 										</div>
-									)}
+									) : null}
 									{isError ? (
 										<Alert>
 											<div>
@@ -433,13 +460,22 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 										</Alert>
 									) : null}
 									<div className="grid grid-cols-3 gap-3 w-full">
-										<LargeButton
-											center
-											to="/onramp"
-											disabled={(coinType && coinType !== SUI_TYPE_ARG) || !providers?.length}
-										>
-											Buy
-										</LargeButton>
+										{isMainnet ? (
+											<LargeButton
+												spacing="sm"
+												className={
+													!accountHasSui && isMainnet
+														? 'col-span-3 !bg-sui-primaryBlue2023 !text-white'
+														: ''
+												}
+												primary={!accountHasSui}
+												center
+												to="/onramp"
+												disabled={(coinType && coinType !== SUI_TYPE_ARG) || !providers?.length}
+											>
+												Buy
+											</LargeButton>
+										) : null}
 
 										<LargeButton
 											center
@@ -480,9 +516,15 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 										>
 											Swap
 										</LargeButton>
+										{!accountHasSui && (
+											<LargeButton disabled to="/stake" center>
+												Stake
+											</LargeButton>
+										)}
 									</div>
+
 									<div className="w-full">
-										{activeCoinType === SUI_TYPE_ARG ? (
+										{accountHasSui || delegatedStake?.length ? (
 											<TokenIconLink
 												disabled={!tokenBalance}
 												accountAddress={activeAccountAddress}

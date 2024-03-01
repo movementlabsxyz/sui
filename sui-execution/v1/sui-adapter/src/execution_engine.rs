@@ -15,6 +15,7 @@ mod checked {
     };
     use sui_types::execution_mode::{self, ExecutionMode};
     use sui_types::gas_coin::GAS;
+    use sui_types::messages_checkpoint::CheckpointTimestamp;
     use sui_types::metrics::LimitsMetrics;
     use sui_types::object::OBJECT_START_VERSION;
     use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
@@ -38,7 +39,6 @@ mod checked {
     use sui_types::gas::GasCostSummary;
     use sui_types::gas::SuiGasStatus;
     use sui_types::inner_temporary_store::InnerTemporaryStore;
-    use sui_types::messages_consensus::ConsensusCommitPrologue;
     use sui_types::storage::BackingStore;
     #[cfg(msim)]
     use sui_types::sui_system_state::advance_epoch_result_injection::maybe_modify_result;
@@ -51,7 +51,7 @@ mod checked {
     };
     use sui_types::{
         base_types::{ObjectRef, SuiAddress, TransactionDigest, TxContext},
-        object::Object,
+        object::{Object, ObjectInner},
         sui_system_state::{ADVANCE_EPOCH_FUNCTION_NAME, SUI_SYSTEM_MODULE_NAME},
         SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID,
         SUI_SYSTEM_PACKAGE_ID,
@@ -75,6 +75,7 @@ mod checked {
         certificate_deny_set: &HashSet<TransactionDigest>,
     ) -> (
         InnerTemporaryStore,
+        SuiGasStatus,
         TransactionEffects,
         Result<Mode::ExecutionResults, ExecutionError>,
     ) {
@@ -172,7 +173,7 @@ mod checked {
         );
 
         // Remove from dependencies the generic hash
-        transaction_dependencies.remove(&TransactionDigest::genesis());
+        transaction_dependencies.remove(&TransactionDigest::genesis_marker());
 
         if enable_expensive_checks && !Mode::allow_arbitrary_function_calls() {
             temporary_store
@@ -189,7 +190,12 @@ mod checked {
             &mut gas_charger,
             *epoch_id,
         );
-        (inner, effects, execution_result)
+        (
+            inner,
+            gas_charger.into_gas_status(),
+            effects,
+            execution_result,
+        )
     }
 
     pub fn execute_genesis_state_update(
@@ -517,13 +523,13 @@ mod checked {
                 for genesis_object in objects {
                     match genesis_object {
                         sui_types::transaction::GenesisObject::RawObject { data, owner } => {
-                            let object = Object {
+                            let object = ObjectInner {
                                 data,
                                 owner,
                                 previous_transaction: tx_ctx.digest(),
                                 storage_rebate: 0,
                             };
-                            temporary_store.create_object(object);
+                            temporary_store.create_object(object.into());
                         }
                     }
                 }
@@ -531,7 +537,20 @@ mod checked {
             }
             TransactionKind::ConsensusCommitPrologue(prologue) => {
                 setup_consensus_commit(
-                    prologue,
+                    prologue.commit_timestamp_ms,
+                    temporary_store,
+                    tx_ctx,
+                    move_vm,
+                    gas_charger,
+                    protocol_config,
+                    metrics,
+                )
+                .expect("ConsensusCommitPrologue cannot fail");
+                Ok(Mode::empty_results())
+            }
+            TransactionKind::ConsensusCommitPrologueV2(prologue) => {
+                setup_consensus_commit(
+                    prologue.commit_timestamp_ms,
                     temporary_store,
                     tx_ctx,
                     move_vm,
@@ -583,6 +602,12 @@ mod checked {
                             // safe mode.
                             builder = setup_authenticator_state_expire(builder, expire);
                         }
+                        EndOfEpochTransactionKind::RandomnessStateCreate => {
+                            panic!("EndOfEpochTransactionKind::RandomnessStateCreate should not exist in v1");
+                        }
+                        EndOfEpochTransactionKind::DenyListStateCreate => {
+                            panic!("EndOfEpochTransactionKind::CoinDenyListStateCreate should not exist in v1");
+                        }
                     }
                 }
                 unreachable!("EndOfEpochTransactionKind::ChangeEpoch should be the last transaction in the list")
@@ -598,6 +623,9 @@ mod checked {
                     metrics,
                 )?;
                 Ok(Mode::empty_results())
+            }
+            TransactionKind::RandomnessStateUpdate(_) => {
+                panic!("RandomnessStateUpdate should not exist in v1");
             }
         }?;
         temporary_store.check_execution_results_consistency()?;
@@ -871,7 +899,7 @@ mod checked {
     /// - Set the timestamp for the `Clock` shared object from the timestamp in the header from
     ///   consensus.
     fn setup_consensus_commit(
-        prologue: ConsensusCommitPrologue,
+        consensus_commit_timestamp_ms: CheckpointTimestamp,
         temporary_store: &mut TemporaryStore<'_>,
         tx_ctx: &mut TxContext,
         move_vm: &Arc<MoveVM>,
@@ -888,7 +916,7 @@ mod checked {
                 vec![],
                 vec![
                     CallArg::CLOCK_MUT,
-                    CallArg::Pure(bcs::to_bytes(&prologue.commit_timestamp_ms).unwrap()),
+                    CallArg::Pure(bcs::to_bytes(&consensus_commit_timestamp_ms).unwrap()),
                 ],
             );
             assert_invariant!(

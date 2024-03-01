@@ -15,9 +15,15 @@ mod checked {
     };
     use sui_types::execution_mode::{self, ExecutionMode};
     use sui_types::gas_coin::GAS;
+    use sui_types::messages_checkpoint::CheckpointTimestamp;
     use sui_types::metrics::LimitsMetrics;
     use sui_types::object::OBJECT_START_VERSION;
     use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
+    use sui_types::randomness_state::{
+        RANDOMNESS_MODULE_NAME, RANDOMNESS_STATE_CREATE_FUNCTION_NAME,
+        RANDOMNESS_STATE_UPDATE_FUNCTION_NAME,
+    };
+    use sui_types::SUI_RANDOMNESS_STATE_OBJECT_ID;
     use tracing::{info, instrument, trace, warn};
 
     use crate::programmable_transactions;
@@ -31,6 +37,7 @@ mod checked {
     };
     use sui_types::clock::{CLOCK_MODULE_NAME, CONSENSUS_COMMIT_PROLOGUE_FUNCTION_NAME};
     use sui_types::committee::EpochId;
+    use sui_types::deny_list::{DENY_LIST_CREATE_FUNC, DENY_LIST_MODULE};
     use sui_types::effects::TransactionEffects;
     use sui_types::error::{ExecutionError, ExecutionErrorKind};
     use sui_types::execution::is_certificate_denied;
@@ -38,20 +45,19 @@ mod checked {
     use sui_types::gas::GasCostSummary;
     use sui_types::gas::SuiGasStatus;
     use sui_types::inner_temporary_store::InnerTemporaryStore;
-    use sui_types::messages_consensus::ConsensusCommitPrologue;
     use sui_types::storage::BackingStore;
     #[cfg(msim)]
     use sui_types::sui_system_state::advance_epoch_result_injection::maybe_modify_result;
     use sui_types::sui_system_state::{AdvanceEpochParams, ADVANCE_EPOCH_SAFE_MODE_FUNCTION_NAME};
-    use sui_types::transaction::CheckedInputObjects;
     use sui_types::transaction::{
         Argument, AuthenticatorStateExpire, AuthenticatorStateUpdate, CallArg, ChangeEpoch,
         Command, EndOfEpochTransactionKind, GenesisTransaction, ObjectArg, ProgrammableTransaction,
         TransactionKind,
     };
+    use sui_types::transaction::{CheckedInputObjects, RandomnessStateUpdate};
     use sui_types::{
         base_types::{ObjectRef, SuiAddress, TransactionDigest, TxContext},
-        object::Object,
+        object::{Object, ObjectInner},
         sui_system_state::{ADVANCE_EPOCH_FUNCTION_NAME, SUI_SYSTEM_MODULE_NAME},
         SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID,
         SUI_SYSTEM_PACKAGE_ID,
@@ -75,10 +81,16 @@ mod checked {
         certificate_deny_set: &HashSet<TransactionDigest>,
     ) -> (
         InnerTemporaryStore,
+        SuiGasStatus,
         TransactionEffects,
         Result<Mode::ExecutionResults, ExecutionError>,
     ) {
         let input_objects = input_objects.into_inner();
+        let mutable_inputs = if enable_expensive_checks {
+            input_objects.mutable_inputs().keys().copied().collect()
+        } else {
+            HashSet::new()
+        };
         let shared_object_refs = input_objects.filter_shared_objects();
         let receiving_objects = transaction_kind.receiving_objects();
         let mut transaction_dependencies = input_objects.transaction_dependencies();
@@ -171,12 +183,19 @@ mod checked {
             status
         );
 
-        // Remove from dependencies the generic hash
-        transaction_dependencies.remove(&TransactionDigest::genesis());
+        // Genesis writes a special digest to indicate that an object was created during
+        // genesis and not written by any normal transaction - remove that from the
+        // dependencies
+        transaction_dependencies.remove(&TransactionDigest::genesis_marker());
 
         if enable_expensive_checks && !Mode::allow_arbitrary_function_calls() {
             temporary_store
-                .check_ownership_invariants(&transaction_signer, &mut gas_charger, is_epoch_change)
+                .check_ownership_invariants(
+                    &transaction_signer,
+                    &mut gas_charger,
+                    &mutable_inputs,
+                    is_epoch_change,
+                )
                 .unwrap()
         } // else, in dev inspect mode and anything goes--don't check
 
@@ -189,7 +208,13 @@ mod checked {
             &mut gas_charger,
             *epoch_id,
         );
-        (inner, effects, execution_result)
+
+        (
+            inner,
+            gas_charger.into_gas_status(),
+            effects,
+            execution_result,
+        )
     }
 
     pub fn execute_genesis_state_update(
@@ -517,13 +542,13 @@ mod checked {
                 for genesis_object in objects {
                     match genesis_object {
                         sui_types::transaction::GenesisObject::RawObject { data, owner } => {
-                            let object = Object {
+                            let object = ObjectInner {
                                 data,
                                 owner,
                                 previous_transaction: tx_ctx.digest(),
                                 storage_rebate: 0,
                             };
-                            temporary_store.create_object(object);
+                            temporary_store.create_object(object.into());
                         }
                     }
                 }
@@ -531,7 +556,7 @@ mod checked {
             }
             TransactionKind::ConsensusCommitPrologue(prologue) => {
                 setup_consensus_commit(
-                    prologue,
+                    prologue.commit_timestamp_ms,
                     temporary_store,
                     tx_ctx,
                     move_vm,
@@ -540,6 +565,19 @@ mod checked {
                     metrics,
                 )
                 .expect("ConsensusCommitPrologue cannot fail");
+                Ok(Mode::empty_results())
+            }
+            TransactionKind::ConsensusCommitPrologueV2(prologue) => {
+                setup_consensus_commit(
+                    prologue.commit_timestamp_ms,
+                    temporary_store,
+                    tx_ctx,
+                    move_vm,
+                    gas_charger,
+                    protocol_config,
+                    metrics,
+                )
+                .expect("ConsensusCommitPrologueV2 cannot fail");
                 Ok(Mode::empty_results())
             }
             TransactionKind::ProgrammableTransaction(pt) => {
@@ -583,6 +621,14 @@ mod checked {
                             // safe mode.
                             builder = setup_authenticator_state_expire(builder, expire);
                         }
+                        EndOfEpochTransactionKind::RandomnessStateCreate => {
+                            assert!(protocol_config.random_beacon());
+                            builder = setup_randomness_state_create(builder);
+                        }
+                        EndOfEpochTransactionKind::DenyListStateCreate => {
+                            assert!(protocol_config.enable_coin_deny_list());
+                            builder = setup_coin_deny_list_state_create(builder);
+                        }
                     }
                 }
                 unreachable!("EndOfEpochTransactionKind::ChangeEpoch should be the last transaction in the list")
@@ -590,6 +636,18 @@ mod checked {
             TransactionKind::AuthenticatorStateUpdate(auth_state_update) => {
                 setup_authenticator_state_update(
                     auth_state_update,
+                    temporary_store,
+                    tx_ctx,
+                    move_vm,
+                    gas_charger,
+                    protocol_config,
+                    metrics,
+                )?;
+                Ok(Mode::empty_results())
+            }
+            TransactionKind::RandomnessStateUpdate(randomness_state_update) => {
+                setup_randomness_state_update(
+                    randomness_state_update,
                     temporary_store,
                     tx_ctx,
                     move_vm,
@@ -871,7 +929,7 @@ mod checked {
     /// - Set the timestamp for the `Clock` shared object from the timestamp in the header from
     ///   consensus.
     fn setup_consensus_commit(
-        prologue: ConsensusCommitPrologue,
+        consensus_commit_timestamp_ms: CheckpointTimestamp,
         temporary_store: &mut TemporaryStore<'_>,
         tx_ctx: &mut TxContext,
         move_vm: &Arc<MoveVM>,
@@ -888,7 +946,7 @@ mod checked {
                 vec![],
                 vec![
                     CallArg::CLOCK_MUT,
-                    CallArg::Pure(bcs::to_bytes(&prologue.commit_timestamp_ms).unwrap()),
+                    CallArg::Pure(bcs::to_bytes(&consensus_commit_timestamp_ms).unwrap()),
                 ],
             );
             assert_invariant!(
@@ -920,6 +978,21 @@ mod checked {
                 vec![],
             )
             .expect("Unable to generate authenticator_state_create transaction!");
+        builder
+    }
+
+    fn setup_randomness_state_create(
+        mut builder: ProgrammableTransactionBuilder,
+    ) -> ProgrammableTransactionBuilder {
+        builder
+            .move_call(
+                SUI_FRAMEWORK_ADDRESS.into(),
+                RANDOMNESS_MODULE_NAME.to_owned(),
+                RANDOMNESS_STATE_CREATE_FUNCTION_NAME.to_owned(),
+                vec![],
+                vec![],
+            )
+            .expect("Unable to generate randomness_state_create transaction!");
         builder
     }
 
@@ -985,6 +1058,64 @@ mod checked {
                 ],
             )
             .expect("Unable to generate authenticator_state_expire transaction!");
+        builder
+    }
+
+    fn setup_randomness_state_update(
+        update: RandomnessStateUpdate,
+        temporary_store: &mut TemporaryStore<'_>,
+        tx_ctx: &mut TxContext,
+        move_vm: &Arc<MoveVM>,
+        gas_charger: &mut GasCharger,
+        protocol_config: &ProtocolConfig,
+        metrics: Arc<LimitsMetrics>,
+    ) -> Result<(), ExecutionError> {
+        let pt = {
+            let mut builder = ProgrammableTransactionBuilder::new();
+            let res = builder.move_call(
+                SUI_FRAMEWORK_ADDRESS.into(),
+                RANDOMNESS_MODULE_NAME.to_owned(),
+                RANDOMNESS_STATE_UPDATE_FUNCTION_NAME.to_owned(),
+                vec![],
+                vec![
+                    CallArg::Object(ObjectArg::SharedObject {
+                        id: SUI_RANDOMNESS_STATE_OBJECT_ID,
+                        initial_shared_version: update.randomness_obj_initial_shared_version,
+                        mutable: true,
+                    }),
+                    CallArg::Pure(bcs::to_bytes(&update.randomness_round).unwrap()),
+                    CallArg::Pure(bcs::to_bytes(&update.random_bytes).unwrap()),
+                ],
+            );
+            assert_invariant!(
+                res.is_ok(),
+                "Unable to generate randomness_state_update transaction!"
+            );
+            builder.finish()
+        };
+        programmable_transactions::execution::execute::<execution_mode::System>(
+            protocol_config,
+            metrics,
+            move_vm,
+            temporary_store,
+            tx_ctx,
+            gas_charger,
+            pt,
+        )
+    }
+
+    fn setup_coin_deny_list_state_create(
+        mut builder: ProgrammableTransactionBuilder,
+    ) -> ProgrammableTransactionBuilder {
+        builder
+            .move_call(
+                SUI_FRAMEWORK_ADDRESS.into(),
+                DENY_LIST_MODULE.to_owned(),
+                DENY_LIST_CREATE_FUNC.to_owned(),
+                vec![],
+                vec![],
+            )
+            .expect("Unable to generate coin_deny_list_create transaction!");
         builder
     }
 }

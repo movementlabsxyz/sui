@@ -9,10 +9,9 @@ use futures::future::{select, Either};
 use futures::pin_mut;
 use futures::FutureExt;
 use itertools::Itertools;
-use mysten_network::Multiaddr;
 use narwhal_types::{TransactionProto, TransactionsClient};
-use narwhal_worker::LocalNarwhalClient;
-use parking_lot::{Mutex, RwLockReadGuard};
+use narwhal_worker::LazyNarwhalClient;
+use parking_lot::RwLockReadGuard;
 use prometheus::Histogram;
 use prometheus::HistogramVec;
 use prometheus::IntCounterVec;
@@ -26,7 +25,7 @@ use prometheus::{
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::future::Future;
 use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
@@ -34,18 +33,19 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use sui_types::base_types::TransactionDigest;
-use sui_types::committee::Committee;
+use sui_types::committee::{Committee, CommitteeTrait};
 use sui_types::error::{SuiError, SuiResult};
 
 use tap::prelude::*;
 use tokio::sync::{Semaphore, SemaphorePermit};
 use tokio::task::JoinHandle;
-use tokio::time::{self, sleep, timeout};
+use tokio::time::{self};
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_handler::{classify, SequencedConsensusTransactionKey};
 use crate::consensus_throughput_calculator::{ConsensusThroughputProfiler, Level};
 use crate::epoch::reconfiguration::{ReconfigState, ReconfigurationInitiator};
+use crate::metrics::LatencyObserver;
 use mysten_metrics::{spawn_monitored_task, GaugeGuard, GaugeGuardFutureExt};
 use sui_protocol_config::ProtocolConfig;
 use sui_simulator::anemo::PeerId;
@@ -179,6 +179,7 @@ impl ConsensusAdapterMetrics {
     }
 }
 
+#[mockall::automock]
 #[async_trait::async_trait]
 pub trait SubmitToConsensus: Sync + Send + 'static {
     async fn submit_to_consensus(
@@ -208,48 +209,6 @@ impl SubmitToConsensus for TransactionsClient<sui_network::tonic::transport::Cha
                 warn!("Submit transaction failed with: {:?}", r);
             })?;
         Ok(())
-    }
-}
-
-/// A Narwhal client that instantiates LocalNarwhalClient lazily.
-pub struct LazyNarwhalClient {
-    /// Outer ArcSwapOption allows initialization after the first connection to Narwhal.
-    /// Inner ArcSwap allows Narwhal restarts across epoch changes.
-    client: ArcSwapOption<ArcSwap<LocalNarwhalClient>>,
-    addr: Multiaddr,
-}
-
-impl LazyNarwhalClient {
-    /// Lazily instantiates LocalNarwhalClient keyed by the address of the Narwhal worker.
-    pub fn new(addr: Multiaddr) -> Self {
-        Self {
-            client: ArcSwapOption::empty(),
-            addr,
-        }
-    }
-
-    async fn get(&self) -> Arc<ArcSwap<LocalNarwhalClient>> {
-        // Narwhal may not have started and created LocalNarwhalClient, so retry in a loop.
-        // Retries should only happen on Sui process start.
-        const NARWHAL_WORKER_START_TIMEOUT: Duration = Duration::from_secs(30);
-        if let Ok(client) = timeout(NARWHAL_WORKER_START_TIMEOUT, async {
-            loop {
-                match LocalNarwhalClient::get_global(&self.addr) {
-                    Some(c) => return c,
-                    None => {
-                        sleep(Duration::from_millis(100)).await;
-                    }
-                };
-            }
-        })
-        .await
-        {
-            return client;
-        }
-        panic!(
-            "Timed out after {:?} waiting for Narwhal worker ({}) to start!",
-            NARWHAL_WORKER_START_TIMEOUT, self.addr,
-        );
     }
 }
 
@@ -819,13 +778,17 @@ impl ConsensusAdapter {
         let send_end_of_publish = if let ConsensusTransactionKind::UserTransaction(_cert) =
             &transaction.kind
         {
-            let reconfig_guard = epoch_store.get_reconfig_state_read_lock_guard();
             // If we are in RejectUserCerts state and we just drained the list we need to
             // send EndOfPublish to signal other validators that we are not submitting more certificates to the epoch.
             // Note that there could be a race condition here where we enter this check in RejectAllCerts state.
             // In that case we don't need to send EndOfPublish because condition to enter
             // RejectAllCerts is when 2f+1 other validators already sequenced their EndOfPublish message.
-            if reconfig_guard.is_reject_user_certs() {
+            // Also note that we could sent multiple EndOfPublish due to that multiple tasks can enter here with
+            // pending_count == 0. This doesn't affect correctness.
+            if epoch_store
+                .get_reconfig_state_read_lock_guard()
+                .is_reject_user_certs()
+            {
                 let pending_count = epoch_store.pending_consensus_certificates_count();
                 debug!(epoch=?epoch_store.epoch(), ?pending_count, "Deciding whether to send EndOfPublish");
                 pending_count == 0 // send end of epoch if empty
@@ -947,6 +910,7 @@ impl ReconfigurationInitiator for Arc<ConsensusAdapter> {
             let send_end_of_publish = pending_count == 0;
             epoch_store.close_user_certs(reconfig_guard);
             send_end_of_publish
+            // reconfig_guard lock is dropped here.
         };
         if send_end_of_publish {
             if let Err(err) = self.submit(
@@ -1058,49 +1022,6 @@ impl<'a> Drop for InflightDropGuard<'a> {
             .sequencing_certificate_latency
             .with_label_values(&[&position, &self.tx_type])
             .observe(latency.as_secs_f64());
-    }
-}
-
-struct LatencyObserver {
-    data: Mutex<LatencyObserverInner>,
-    latency_ms: AtomicU64,
-}
-
-#[derive(Default)]
-struct LatencyObserverInner {
-    points: VecDeque<Duration>,
-    sum: Duration,
-}
-
-impl LatencyObserver {
-    pub fn new() -> Self {
-        Self {
-            data: Mutex::new(LatencyObserverInner::default()),
-            latency_ms: AtomicU64::new(u64::MAX),
-        }
-    }
-
-    pub fn report(&self, latency: Duration) {
-        const MAX_SAMPLES: usize = 64;
-        let mut data = self.data.lock();
-        data.points.push_back(latency);
-        data.sum += latency;
-        if data.points.len() >= MAX_SAMPLES {
-            let pop = data.points.pop_front().expect("data vector is not empty");
-            data.sum -= pop; // This does not overflow because of how running sum is calculated
-        }
-        let latency = data.sum.as_millis() as u64 / data.points.len() as u64;
-        self.latency_ms.store(latency, Ordering::Relaxed);
-    }
-
-    pub fn latency(&self) -> Option<Duration> {
-        let latency = self.latency_ms.load(Ordering::Relaxed);
-        if latency == u64::MAX {
-            // Not initialized yet (0 data points)
-            None
-        } else {
-            Some(Duration::from_millis(latency))
-        }
     }
 }
 

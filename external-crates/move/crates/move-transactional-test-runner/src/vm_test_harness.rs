@@ -8,7 +8,7 @@ use crate::{
     framework::{run_test_impl, CompiledState, MaybeNamedCompiledModule, MoveTestAdapter},
     tasks::{EmptyCommand, InitCommand, SyntaxChoice, TaskInput},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use async_trait::async_trait;
 use clap::Parser;
 use move_binary_format::{
@@ -18,10 +18,7 @@ use move_binary_format::{
 use move_command_line_common::{
     address::ParsedAddress, files::verify_and_create_named_address_mapping,
 };
-use move_compiler::{
-    compiled_unit::AnnotatedCompiledUnit, editions::Edition, shared::PackagePaths,
-    FullyCompiledProgram,
-};
+use move_compiler::{editions::Edition, shared::PackagePaths, FullyCompiledProgram};
 use move_core_types::{
     account_address::AccountAddress,
     identifier::IdentStr,
@@ -68,10 +65,15 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
         self.default_syntax
     }
 
+    async fn cleanup_resources(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     async fn init(
         default_syntax: SyntaxChoice,
         pre_compiled_deps: Option<&'a FullyCompiledProgram>,
         task_opt: Option<TaskInput<(InitCommand, Self::ExtraInitArgs)>>,
+        _path: &Path,
     ) -> (Self, Option<String>) {
         let (additional_mapping, compiler_edition) = match task_opt.map(|t| t.command) {
             Some((InitCommand { named_addresses }, AdapterInitArgs { edition })) => {
@@ -226,6 +228,10 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
     ) -> Result<Option<String>> {
         unimplemented!()
     }
+
+    async fn process_error(&self, err: Error) -> Error {
+        err
+    }
 }
 
 pub fn format_vm_error(e: &VMError) -> String {
@@ -328,12 +334,7 @@ static MOVE_STDLIB_COMPILED: Lazy<Vec<CompiledModule>> = Lazy::new(|| {
         }
         Ok((units, _warnings)) => units
             .into_iter()
-            .filter_map(|m| match m {
-                AnnotatedCompiledUnit::Module(annot_module) => {
-                    Some(annot_module.named_module.module)
-                }
-                AnnotatedCompiledUnit::Script(_) => None,
-            })
+            .map(|annot_module| annot_module.named_module.module)
             .collect(),
     }
 });

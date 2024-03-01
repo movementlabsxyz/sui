@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    expansion::ast::{Address, ModuleIdent, ModuleIdent_, SpecId},
-    hlir::ast::{self as H, Var},
+    expansion::ast::{Address, ModuleIdent, ModuleIdent_},
     parser::ast::{ConstantName, FunctionName, StructName},
     shared::{CompilationEnv, NumericalAddress},
 };
@@ -17,7 +16,7 @@ use std::{
 };
 use IR::Ability;
 
-/// Compilation context for a single compilation unit (module or script).
+/// Compilation context for a single compilation unit (module).
 /// Contains all of the dependencies actually used in the module
 pub struct Context<'a> {
     pub env: &'a mut CompilationEnv,
@@ -25,7 +24,6 @@ pub struct Context<'a> {
     current_module: Option<&'a ModuleIdent>,
     seen_structs: BTreeSet<(ModuleIdent, StructName)>,
     seen_functions: BTreeSet<(ModuleIdent, FunctionName)>,
-    spec_info: BTreeMap<SpecId, (IR::NopLabel, BTreeMap<Var, H::SingleType>)>,
 }
 
 impl<'a> Context<'a> {
@@ -40,7 +38,6 @@ impl<'a> Context<'a> {
             current_module,
             seen_structs: BTreeSet::new(),
             seen_functions: BTreeSet::new(),
-            spec_info: BTreeMap::new(),
         }
     }
 
@@ -55,12 +52,6 @@ impl<'a> Context<'a> {
 
     fn is_current_module(&self, m: &ModuleIdent) -> bool {
         self.current_module.map(|cur| cur == m).unwrap_or(false)
-    }
-
-    pub fn finish_function(
-        &mut self,
-    ) -> BTreeMap<SpecId, (IR::NopLabel, BTreeMap<Var, H::SingleType>)> {
-        std::mem::take(&mut self.spec_info)
     }
 
     //**********************************************************************************************
@@ -282,13 +273,9 @@ impl<'a> Context<'a> {
         IR::QualifiedStructIdent::new(mname, n)
     }
 
-    pub fn function_definition_name(
-        &self,
-        m: Option<&ModuleIdent>,
-        f: FunctionName,
-    ) -> IR::FunctionName {
+    pub fn function_definition_name(&self, m: &ModuleIdent, f: FunctionName) -> IR::FunctionName {
         assert!(
-            self.current_module == m,
+            self.current_module == Some(m),
             "ICE invalid function definition lookup"
         );
         Self::translate_function_name(f)
@@ -309,13 +296,9 @@ impl<'a> Context<'a> {
         (mname, n)
     }
 
-    pub fn constant_definition_name(
-        &self,
-        m: Option<&ModuleIdent>,
-        f: ConstantName,
-    ) -> IR::ConstantName {
+    pub fn constant_definition_name(&self, m: &ModuleIdent, f: ConstantName) -> IR::ConstantName {
         assert!(
-            self.current_module == m,
+            self.current_module == Some(m),
             "ICE invalid constant definition lookup"
         );
         Self::translate_constant_name(f)
@@ -323,18 +306,5 @@ impl<'a> Context<'a> {
 
     pub fn constant_name(&mut self, f: ConstantName) -> IR::ConstantName {
         Self::translate_constant_name(f)
-    }
-
-    //**********************************************************************************************
-    // Nops
-    //**********************************************************************************************
-
-    pub fn spec(&mut self, id: SpecId, used_locals: BTreeMap<Var, H::SingleType>) -> IR::NopLabel {
-        let label = IR::NopLabel(format!("{}", id).into());
-        assert!(self
-            .spec_info
-            .insert(id, (label.clone(), used_locals))
-            .is_none());
-        label
     }
 }

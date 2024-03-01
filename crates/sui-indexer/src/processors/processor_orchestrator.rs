@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use futures::future::try_join_all;
-use tokio::time::sleep;
 use tracing::{error, info};
 
 use crate::metrics::IndexerMetrics;
-use crate::processors::address_processor::AddressProcessor;
-use crate::processors::checkpoint_metrics_processor::CheckpointMetricsProcessor;
-use crate::store::IndexerStore;
+use crate::store::IndexerAnalyticalStore;
+
+use super::address_metrics_processor::AddressMetricsProcessor;
+use super::move_call_metrics_processor::MoveCallMetricsProcessor;
+use super::network_metrics_processor::NetworkMetricsProcessor;
 
 pub struct ProcessorOrchestrator<S> {
     store: S,
@@ -17,7 +18,7 @@ pub struct ProcessorOrchestrator<S> {
 
 impl<S> ProcessorOrchestrator<S>
 where
-    S: IndexerStore + Send + Sync + 'static + Clone,
+    S: IndexerAnalyticalStore + Clone + Send + Sync + 'static,
 {
     pub fn new(store: S, metrics: IndexerMetrics) -> Self {
         Self { store, metrics }
@@ -25,40 +26,57 @@ where
 
     pub async fn run_forever(&mut self) {
         info!("Processor orchestrator started...");
-        let address_stats_processor = AddressProcessor::new(self.store.clone());
-        let cp_metrics_processor = CheckpointMetricsProcessor::new(self.store.clone());
-
-        let metrics_clone = self.metrics.clone();
-        let addr_handle = tokio::task::spawn(async move {
+        let network_metrics_processor =
+            NetworkMetricsProcessor::new(self.store.clone(), self.metrics.clone());
+        let network_metrics_handle = tokio::task::spawn(async move {
             loop {
-                let addr_stats_exec_res = address_stats_processor.start().await;
-                if let Err(e) = &addr_stats_exec_res {
+                let network_metrics_res = network_metrics_processor.start().await;
+                if let Err(e) = network_metrics_res {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     error!(
-                        "Indexer address stats processor failed with error: {:?}, retrying...",
+                        "Indexer network metrics processor failed with error {:?}, retrying in 5s...",
                         e
                     );
                 }
-                metrics_clone.address_processor_failure.inc();
-                sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
 
-        let metrics_clone = self.metrics.clone();
-        let cp_metrics_handle = tokio::task::spawn(async move {
+        let addr_metrics_processor =
+            AddressMetricsProcessor::new(self.store.clone(), self.metrics.clone());
+        let addr_metrics_handle = tokio::task::spawn(async move {
             loop {
-                let cp_metrics_exec_res = cp_metrics_processor.start().await;
-                if let Err(e) = &cp_metrics_exec_res {
+                let addr_metrics_res = addr_metrics_processor.start().await;
+                if let Err(e) = addr_metrics_res {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     error!(
-                        "Indexer checkpoint metrics processor failed with error: {:?}, retrying...",
+                        "Indexer address metrics processor failed with error {:?}, retrying in 5s...",
                         e
                     );
                 }
-                metrics_clone.checkpoint_metrics_processor_failure.inc();
-                sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
-        try_join_all(vec![addr_handle, cp_metrics_handle])
-            .await
-            .expect("Processor orchestrator should not run into errors.");
+
+        let move_call_metrics_processor =
+            MoveCallMetricsProcessor::new(self.store.clone(), self.metrics.clone());
+        let move_call_metrics_handle = tokio::task::spawn(async move {
+            loop {
+                let move_call_metrics_res = move_call_metrics_processor.start().await;
+                if let Err(e) = move_call_metrics_res {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    error!(
+                        "Indexer move call metrics processor failed with error {:?}, retrying in 5s...",
+                        e
+                    );
+                }
+            }
+        });
+
+        try_join_all(vec![
+            network_metrics_handle,
+            addr_metrics_handle,
+            move_call_metrics_handle,
+        ])
+        .await
+        .expect("Processor orchestrator should not run into errors.");
     }
 }

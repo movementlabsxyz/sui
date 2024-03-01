@@ -50,12 +50,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -71,7 +73,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -109,10 +110,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: avYcyVgYMXTyaUYh9IRwLK0gSzl7YF6ZQDAbrS1Bhvo=
     worker-key-pair:
@@ -160,12 +174,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -181,7 +197,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -219,10 +234,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: OXnx3yM1C/ppgnDMx/o1d49fJs7E05kq11mXNae/O+I=
     worker-key-pair:
@@ -270,12 +298,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -291,7 +321,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -329,10 +358,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: CyNkjqNVr3HrHTH7f/NLs7u5lUHJzuPAw0PqMTD2y2s=
     worker-key-pair:
@@ -380,12 +422,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -401,7 +445,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -439,10 +482,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: X/I/kM+KvHcxAKEf2UU6Sr7SpN3bhiE9nP5CuM/iIY0=
     worker-key-pair:
@@ -490,12 +546,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -511,7 +569,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -549,10 +606,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: N272EiFDyKtxRbDKbyN6ujenJ+skPcRoc/XolpOLGnU=
     worker-key-pair:
@@ -600,12 +670,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -621,7 +693,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -659,10 +730,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
   - protocol-key-pair:
       value: a74f03IOjL8ZFSWFChFVEi+wiMwHNwNCPDGIYkGfgjs=
     worker-key-pair:
@@ -710,12 +794,14 @@ validator_configs:
     grpc-concurrency-limit: 20000000000
     p2p-config:
       listen-address: "0.0.0.0:1"
+      state-sync:
+        checkpoint-content-timeout-ms: 10000
     genesis:
       genesis: "[fake genesis]"
     authority-store-pruning-config:
       num-latest-epoch-dbs-to-retain: 3
       epoch-db-pruning-period-secs: 3600
-      num-epochs-to-retain: 2
+      num-epochs-to-retain: 0
       max-checkpoints-in-batch: 10
       max-transactions-in-batch: 1000
     end-of-epoch-broadcast-channel-capacity: 128
@@ -731,7 +817,6 @@ validator_configs:
       force-disable-epoch-sui-conservation-check: false
       enable-state-consistency-check: false
       force-disable-state-consistency-check: false
-      enable-move-vm-paranoid-checks: false
       enable-secondary-index-checks: false
     transaction-deny-config:
       package-publish-disabled: false
@@ -769,10 +854,23 @@ validator_configs:
         - Kakao
         - Slack
         - Twitch
-    overload-threshold-config:
-      max_txn_age_in_queue:
+    authority-overload-config:
+      max-txn-age-in-queue:
         secs: 1
         nanos: 0
+      overload-monitor-interval:
+        secs: 10
+        nanos: 0
+      execution-queue-latency-soft-limit:
+        secs: 1
+        nanos: 0
+      execution-queue-latency-hard-limit:
+        secs: 10
+        nanos: 0
+      max-load-shedding-percentage: 95
+      min-load-shedding-percentage-above-hard-limit: 50
+      safe-transaction-ready-rate: 100
+      check-system-overload-at-signing: true
 account_keys:
   - Hloy4pnf8pWEHGP+4OFsXz56bLdIJhkD2O+OdKMqCA4=
   - pvMScjoMR/DaN0M5IOxS2VpGC59N6kv6gDm63ufLQ5w=
@@ -780,4 +878,3 @@ account_keys:
   - mfPjCoE6SX0Sl84MnmNS/LS+tfPpkn7I8tziuk2g0WM=
   - 5RWlYF22jS9i76zLl8jP2D3D8GC5ht+IP1dWUBGZxi8=
 genesis: "[fake genesis]"
-

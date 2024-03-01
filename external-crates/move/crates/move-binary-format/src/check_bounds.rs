@@ -441,20 +441,24 @@ impl<'a> BoundsChecker<'a> {
                         }
                     }
                 }
-                Pack(idx) | Unpack(idx) | Exists(idx) | ImmBorrowGlobal(idx)
-                | MutBorrowGlobal(idx) | MoveFrom(idx) | MoveTo(idx) => self
-                    .check_code_unit_bounds_impl_opt(
-                        &self.view.struct_defs(),
-                        *idx,
-                        bytecode_offset,
-                    )?,
+                Pack(idx)
+                | Unpack(idx)
+                | ExistsDeprecated(idx)
+                | ImmBorrowGlobalDeprecated(idx)
+                | MutBorrowGlobalDeprecated(idx)
+                | MoveFromDeprecated(idx)
+                | MoveToDeprecated(idx) => self.check_code_unit_bounds_impl_opt(
+                    &self.view.struct_defs(),
+                    *idx,
+                    bytecode_offset,
+                )?,
                 PackGeneric(idx)
                 | UnpackGeneric(idx)
-                | ExistsGeneric(idx)
-                | ImmBorrowGlobalGeneric(idx)
-                | MutBorrowGlobalGeneric(idx)
-                | MoveFromGeneric(idx)
-                | MoveToGeneric(idx) => {
+                | ExistsGenericDeprecated(idx)
+                | ImmBorrowGlobalGenericDeprecated(idx)
+                | MutBorrowGlobalGenericDeprecated(idx)
+                | MoveFromGenericDeprecated(idx)
+                | MoveToGenericDeprecated(idx) => {
                     self.check_code_unit_bounds_impl_opt(
                         &self.view.struct_instantiations(),
                         *idx,

@@ -74,7 +74,7 @@ fn optimize_cmd(
         }
 
         C::Jump { .. } => false,
-        C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+        C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
     })
 }
 
@@ -88,7 +88,6 @@ fn optimize_exp(consts: &UniqueMap<ConstantName, Value>, e: &mut Exp) -> bool {
         E::Unit { .. }
         | E::Value(_)
         | E::UnresolvedError
-        | E::Spec(_, _)
         | E::BorrowLocal(_, _)
         | E::Move { .. }
         | E::Copy { .. }

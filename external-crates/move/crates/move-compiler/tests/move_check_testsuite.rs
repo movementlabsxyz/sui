@@ -13,6 +13,7 @@ use move_compiler::{
     diagnostics::*,
     editions::{Edition, Flavor},
     shared::{Flags, NumericalAddress, PackageConfig, PackagePaths},
+    sui_mode::linters::{known_filters, linter_visitors},
     Compiler, PASS_PARSER,
 };
 
@@ -20,9 +21,10 @@ use move_compiler::{
 const KEEP_TMP: &str = "KEEP";
 
 const TEST_EXT: &str = "unit_test";
-const VERIFICATION_EXT: &str = "verification";
 const UNUSED_EXT: &str = "unused";
+const MIGRATION_EXT: &str = "migration";
 
+const LINTER_DIR: &str = "linter";
 const SUI_MODE_DIR: &str = "sui_mode";
 const MOVE_2024_DIR: &str = "move_2024";
 
@@ -48,6 +50,7 @@ fn default_testing_addresses(flavor: Flavor) -> BTreeMap<String, NumericalAddres
 }
 
 fn move_check_testsuite(path: &Path) -> datatest_stable::Result<()> {
+    let lint = path.components().any(|c| c.as_os_str() == LINTER_DIR);
     let flavor = if path.components().any(|c| c.as_os_str() == SUI_MODE_DIR) {
         Flavor::Sui
     } else {
@@ -63,10 +66,10 @@ fn move_check_testsuite(path: &Path) -> datatest_stable::Result<()> {
         edition,
         ..PackageConfig::default()
     };
-    testsuite(path, config)
+    testsuite(path, config, lint)
 }
 
-fn testsuite(path: &Path, mut config: PackageConfig) -> datatest_stable::Result<()> {
+fn testsuite(path: &Path, mut config: PackageConfig, lint: bool) -> datatest_stable::Result<()> {
     // A test is marked that it should also be compiled in test mode by having a `path.unit_test`
     // file.
     if path.with_extension(TEST_EXT).exists() {
@@ -90,32 +93,37 @@ fn testsuite(path: &Path, mut config: PackageConfig) -> datatest_stable::Result<
             Path::new(&test_out_path),
             Flags::testing(),
             config,
+            lint,
         )?;
     }
 
-    // A verification case is marked that it should also be compiled in verification mode by having
-    // a `path.verification` file.
-    if path.with_extension(VERIFICATION_EXT).exists() {
-        let verification_exp_path = format!(
-            "{}.verification.{}",
+    // A test is marked that it should also be compiled in migration mode by having a
+    // `path.migration` file.
+    if path.with_extension(MIGRATION_EXT).exists() {
+        let migration_exp_path = format!(
+            "{}.{}.{}",
             path.with_extension("").to_string_lossy(),
+            MIGRATION_EXT,
             EXP_EXT
         );
-        let verification_out_path = format!(
-            "{}.verification.{}",
+        let migration_out_path = format!(
+            "{}.{}.{}",
             path.with_extension("").to_string_lossy(),
+            MIGRATION_EXT,
             OUT_EXT
         );
         let mut config = config.clone();
         config
             .warning_filter
             .union(&WarningFilters::unused_warnings_filter_for_test());
-        run_test(
+        run_test_inner(
             path,
-            Path::new(&verification_exp_path),
-            Path::new(&verification_out_path),
-            Flags::verification(),
+            Path::new(&migration_exp_path),
+            Path::new(&migration_out_path),
+            Flags::testing(),
             config,
+            lint,
+            true,
         )?;
     }
 
@@ -137,6 +145,7 @@ fn testsuite(path: &Path, mut config: PackageConfig) -> datatest_stable::Result<
             Path::new(&unused_out_path),
             Flags::testing(),
             config.clone(),
+            lint,
         )?;
     }
 
@@ -148,7 +157,7 @@ fn testsuite(path: &Path, mut config: PackageConfig) -> datatest_stable::Result<
     config
         .warning_filter
         .union(&WarningFilters::unused_warnings_filter_for_test());
-    run_test(path, &exp_path, &out_path, flags, config)?;
+    run_test(path, &exp_path, &out_path, flags, config, lint)?;
     Ok(())
 }
 
@@ -159,6 +168,20 @@ pub fn run_test(
     out_path: &Path,
     flags: Flags,
     default_config: PackageConfig,
+    lint: bool,
+) -> anyhow::Result<()> {
+    run_test_inner(path, exp_path, out_path, flags, default_config, lint, false)
+}
+
+// Runs all tests under the test/testsuite directory.
+pub fn run_test_inner(
+    path: &Path,
+    exp_path: &Path,
+    out_path: &Path,
+    flags: Flags,
+    default_config: PackageConfig,
+    lint: bool,
+    migration_mode: bool,
 ) -> anyhow::Result<()> {
     let targets: Vec<String> = vec![path.to_str().unwrap().to_owned()];
     let named_address_map = default_testing_addresses(default_config.flavor);
@@ -167,23 +190,43 @@ pub fn run_test(
         paths: move_stdlib::move_stdlib_files(),
         named_address_map: named_address_map.clone(),
     }];
+    let name = if migration_mode {
+        let mut config = default_config.clone();
+        config.edition = Edition::E2024_MIGRATION;
+        Some(("test".into(), config))
+    } else {
+        None
+    };
     let targets = vec![PackagePaths {
-        name: None,
+        name,
         paths: targets,
         named_address_map,
     }];
 
     let flags = flags.set_sources_shadow_deps(true);
-    let (files, comments_and_compiler_res) = Compiler::from_package_paths(targets, deps)
+
+    let mut compiler = Compiler::from_package_paths(targets, deps)
         .unwrap()
         .set_flags(flags)
-        .set_default_config(default_config)
-        .run::<PASS_PARSER>()?;
+        .set_default_config(default_config);
+
+    if lint {
+        let (prefix, filters) = known_filters();
+        compiler = compiler
+            .add_visitors(linter_visitors())
+            .add_custom_known_filters(prefix, filters);
+    }
+
+    let (files, comments_and_compiler_res) = compiler.run::<PASS_PARSER>()?;
     let diags = move_check_for_errors(comments_and_compiler_res);
 
     let has_diags = !diags.is_empty();
     let diag_buffer = if has_diags {
-        report_diagnostics_to_buffer(&files, diags)
+        if migration_mode {
+            report_migration_to_buffer(&files, diags)
+        } else {
+            report_diagnostics_to_buffer(&files, diags)
+        }
     } else {
         vec![]
     };

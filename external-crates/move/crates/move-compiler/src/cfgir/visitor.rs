@@ -259,7 +259,7 @@ pub trait SimpleAbsInt: Sized {
                 self.exp(context, state, e);
             }
             C::Jump { .. } => (),
-            C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+            C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
         }
     }
 
@@ -401,7 +401,7 @@ pub trait SimpleAbsInt: Sized {
             }
 
             E::Unit { .. } => vec![],
-            E::Value(_) | E::Constant(_) | E::Spec(_, _) | E::UnresolvedError => default_values(1),
+            E::Value(_) | E::Constant(_) | E::UnresolvedError => default_values(1),
 
             E::BinopExp(e1, _, e2) => {
                 self.exp(context, state, e1);

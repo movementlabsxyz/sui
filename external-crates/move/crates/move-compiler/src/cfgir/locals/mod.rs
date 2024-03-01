@@ -192,7 +192,7 @@ fn command(context: &mut Context, sp!(loc, cmd_): &Command) {
             context.extend_diags(diags)
         }
         C::Jump { .. } => (),
-        C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+        C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
     }
 }
 
@@ -219,24 +219,37 @@ fn lvalue(context: &mut Context, sp!(loc, l_): &LValue) {
                             LocalState::MaybeUnavailable { .. } => "might contain",
                         };
                         let available = *available;
-                        let vstr = match display_var(v.value()) {
-                            DisplayVar::Tmp => panic!("ICE invalid assign tmp local"),
-                            DisplayVar::Orig(s) => s,
+                        match display_var(v.value()) {
+                            DisplayVar::Tmp => {
+                                let msg = format!(
+                                    "This expression without the '{}' ability must be used",
+                                    Ability_::Drop,
+                                );
+                                let mut diag = diag!(
+                                    MoveSafety::UnusedUndroppable,
+                                    (*loc, "Invalid usage of undroppable value".to_string()),
+                                    (available, msg),
+                                );
+                                add_drop_ability_tip(context, &mut diag, ty.clone());
+                                context.add_diag(diag)
+                            }
+                            DisplayVar::Orig(s) => {
+                                let msg = format!(
+                                    "The variable {} a value due to this assignment. The value \
+                                    does not have the '{}' ability and must be used before you \
+                                    assign to this variable again",
+                                    verb,
+                                    Ability_::Drop,
+                                );
+                                let mut diag = diag!(
+                                    MoveSafety::UnusedUndroppable,
+                                    (*loc, format!("Invalid assignment to variable '{}'", s)),
+                                    (available, msg),
+                                );
+                                add_drop_ability_tip(context, &mut diag, ty.clone());
+                                context.add_diag(diag)
+                            }
                         };
-                        let msg = format!(
-                            "The variable {} a value due to this assignment. The value does not \
-                             have the '{}' ability and must be used before you assign to this \
-                             variable again",
-                            verb,
-                            Ability_::Drop,
-                        );
-                        let mut diag = diag!(
-                            MoveSafety::UnusedUndroppable,
-                            (*loc, format!("Invalid assignment to variable '{}'", vstr)),
-                            (available, msg),
-                        );
-                        add_drop_ability_tip(context, &mut diag, ty.clone());
-                        context.add_diag(diag)
                     }
                 }
             }
@@ -250,7 +263,7 @@ fn exp(context: &mut Context, parent_e: &Exp) {
     use UnannotatedExp_ as E;
     let eloc = &parent_e.exp.loc;
     match &parent_e.exp.value {
-        E::Unit { .. } | E::Value(_) | E::Constant(_) | E::Spec(_, _) | E::UnresolvedError => (),
+        E::Unit { .. } | E::Value(_) | E::Constant(_) | E::UnresolvedError => (),
 
         E::BorrowLocal(_, var) | E::Copy { var, .. } => use_local(context, eloc, var),
 
@@ -403,7 +416,7 @@ fn add_drop_ability_tip(context: &Context, diag: &mut Diagnostic, st: SingleType
                 T::Param(TParam { abilities, .. }) | T::Apply(Some(abilities), _, _) => {
                     abilities.clone()
                 }
-                T::Var(_) | T::Apply(None, _, _) => panic!("ICE expansion failed"),
+                T::Var(_) | T::Apply(None, _, _) | T::Fun(_, _) => panic!("ICE expansion failed"),
             };
             (ty_arg, abilities)
         }),

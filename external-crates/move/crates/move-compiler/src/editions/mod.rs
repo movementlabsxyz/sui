@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::{diag, shared::CompilationEnv};
+use crate::{diag, diagnostics::Diagnostic, shared::CompilationEnv};
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
 use once_cell::sync::Lazy;
@@ -34,6 +34,13 @@ pub enum FeatureGate {
     DotCall,
     PositionalFields,
     LetMut,
+    Move2024Optimizations,
+    Move2024Keywords,
+    BlockLabels,
+    Move2024Paths,
+    MacroFuns,
+    Move2024Migration,
+    SyntaxMethods,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd, Ord, Default)]
@@ -43,17 +50,15 @@ pub enum Flavor {
     Sui,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, PartialOrd, Ord)]
-pub enum SyntaxEdition {
-    Legacy,
-    E2024,
-}
+pub const UPGRADE_NOTE: &str =
+    "You can update the edition in the 'Move.toml', or via command line flag if invoking the \
+    compiler directly.";
 
 //**************************************************************************************************
 // Entry
 //**************************************************************************************************
 
-pub fn check_feature(
+pub fn check_feature_or_error(
     env: &mut CompilationEnv,
     edition: Edition,
     feature: FeatureGate,
@@ -61,33 +66,35 @@ pub fn check_feature(
 ) -> bool {
     let supports_feature = edition.supports(feature);
     if !supports_feature {
-        let valid_editions = valid_editions_for_feature(feature)
-            .into_iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut diag = diag!(
-            Editions::FeatureTooNew,
-            (
-                loc,
-                format!(
-                    "{} not supported by current edition '{edition}', \
-                    only '{valid_editions}' support this feature",
-                    feature.error_prefix(),
-                )
-            )
-        );
-        diag.add_note(
-            "You can update the edition in the 'Move.toml', \
-            or via command line flag if invoking the compiler directly.",
-        );
-        env.add_diag(diag);
+        env.add_diag(create_feature_error(edition, feature, loc));
     }
     supports_feature
 }
 
+pub fn create_feature_error(edition: Edition, feature: FeatureGate, loc: Loc) -> Diagnostic {
+    assert!(!edition.supports(feature));
+    let valid_editions = valid_editions_for_feature(feature)
+        .into_iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut diag = diag!(
+        Editions::FeatureTooNew,
+        (
+            loc,
+            format!(
+                "{} not supported by current edition '{edition}', \
+                only '{valid_editions}' support this feature",
+                feature.error_prefix(),
+            )
+        )
+    );
+    diag.add_note(UPGRADE_NOTE);
+    diag
+}
+
 pub fn valid_editions_for_feature(feature: FeatureGate) -> Vec<Edition> {
-    Edition::ALL
+    Edition::VALID
         .iter()
         .filter(|e| e.supports(feature))
         .copied()
@@ -109,7 +116,15 @@ const E2024_ALPHA_FEATURES: &[FeatureGate] = &[
     FeatureGate::DotCall,
     FeatureGate::PositionalFields,
     FeatureGate::LetMut,
+    FeatureGate::Move2024Keywords,
+    FeatureGate::BlockLabels,
+    FeatureGate::Move2024Paths,
+    FeatureGate::MacroFuns,
+    FeatureGate::Move2024Optimizations,
+    FeatureGate::SyntaxMethods,
 ];
+
+const E2024_MIGRATION_FEATURES: &[FeatureGate] = &[FeatureGate::Move2024Migration];
 
 impl Edition {
     pub const LEGACY: Self = Self {
@@ -120,27 +135,26 @@ impl Edition {
         edition: symbol!("2024"),
         release: Some(symbol!("alpha")),
     };
+    pub const E2024_MIGRATION: Self = Self {
+        edition: symbol!("2024"),
+        release: Some(symbol!("migration")),
+    };
 
-    const SEP: &str = ".";
+    const SEP: &'static str = ".";
 
-    pub const ALL: &[Self] = &[Self::LEGACY, Self::E2024_ALPHA];
+    pub const ALL: &'static [Self] = &[Self::LEGACY, Self::E2024_ALPHA, Self::E2024_MIGRATION];
+    pub const VALID: &'static [Self] = &[Self::LEGACY, Self::E2024_ALPHA];
 
     pub fn supports(&self, feature: FeatureGate) -> bool {
         SUPPORTED_FEATURES.get(self).unwrap().contains(&feature)
     }
 
-    pub fn syntax(&self) -> SyntaxEdition {
-        match *self {
-            Self::LEGACY => SyntaxEdition::Legacy,
-            Self::E2024_ALPHA => SyntaxEdition::E2024,
-            _ => self.unknown_edition_panic(),
-        }
-    }
     // Intended only for implementing the lazy static (supported feature map) above
     fn prev(&self) -> Option<Self> {
         match *self {
             Self::LEGACY => None,
             Self::E2024_ALPHA => Some(Self::LEGACY),
+            Self::E2024_MIGRATION => Some(Self::E2024_ALPHA),
             _ => self.unknown_edition_panic(),
         }
     }
@@ -155,6 +169,11 @@ impl Edition {
                 features.extend(E2024_ALPHA_FEATURES);
                 features
             }
+            Self::E2024_MIGRATION => {
+                let mut features = self.prev().unwrap().features();
+                features.extend(E2024_MIGRATION_FEATURES);
+                features
+            }
             _ => self.unknown_edition_panic(),
         }
     }
@@ -166,7 +185,7 @@ impl Edition {
     fn unknown_edition_error(&self) -> anyhow::Error {
         anyhow::anyhow!(
             "Unsupported edition \"{self}\". Current supported editions include: {}",
-            Self::ALL
+            Self::VALID
                 .iter()
                 .map(|e| format!("\"{}\"", e))
                 .collect::<Vec<_>>()
@@ -176,9 +195,9 @@ impl Edition {
 }
 
 impl Flavor {
-    pub const GLOBAL_STORAGE: &str = "global-storage";
-    pub const SUI: &str = "sui";
-    pub const ALL: &[Self] = &[Self::GlobalStorage, Self::Sui];
+    pub const GLOBAL_STORAGE: &'static str = "global-storage";
+    pub const SUI: &'static str = "sui";
+    pub const ALL: &'static [Self] = &[Self::GlobalStorage, Self::Sui];
 }
 
 impl FeatureGate {
@@ -191,6 +210,13 @@ impl FeatureGate {
             FeatureGate::DotCall => "Method syntax is",
             FeatureGate::PositionalFields => "Positional fields are",
             FeatureGate::LetMut => "'mut' variable modifiers are",
+            FeatureGate::Move2024Optimizations => "Move 2024 optimizations are",
+            FeatureGate::Move2024Keywords => "Move 2024 keywords are",
+            FeatureGate::BlockLabels => "Block labels are",
+            FeatureGate::Move2024Paths => "Move 2024 paths are",
+            FeatureGate::MacroFuns => "'macro' functions are",
+            FeatureGate::Move2024Migration => "Move 2024 migration is",
+            FeatureGate::SyntaxMethods => "'syntax' methods are",
         }
     }
 }
@@ -213,7 +239,7 @@ impl FromStr for Edition {
             edition: Symbol::from(edition),
             release: release.map(Symbol::from),
         };
-        if !Self::ALL.iter().any(|e| e == &edition) {
+        if !Self::VALID.iter().any(|e| e == &edition) {
             return Err(edition.unknown_edition_error());
         }
         Ok(edition)

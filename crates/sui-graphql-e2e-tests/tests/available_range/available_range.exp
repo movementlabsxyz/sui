@@ -1,0 +1,55 @@
+processed 5 tasks
+
+task 1 'run-graphql'. lines 6-28:
+Response: {
+  "data": {
+    "availableRange": {
+      "first": {
+        "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+        "sequenceNumber": 0
+      },
+      "last": {
+        "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+        "sequenceNumber": 0
+      }
+    },
+    "first": {
+      "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+      "sequenceNumber": 0
+    },
+    "last": {
+      "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+      "sequenceNumber": 0
+    }
+  }
+}
+
+task 2 'create-checkpoint'. lines 30-30:
+Checkpoint created: 1
+
+task 3 'create-checkpoint'. lines 33-33:
+Checkpoint created: 2
+
+task 4 'run-graphql'. lines 36-58:
+Response: {
+  "data": {
+    "availableRange": {
+      "first": {
+        "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+        "sequenceNumber": 0
+      },
+      "last": {
+        "digest": "82PPNUjBCz876hSnTmKsFWgrH1eFCXfuqjc1M7JTTEj1",
+        "sequenceNumber": 2
+      }
+    },
+    "first": {
+      "digest": "38hTmcohmPa16Wb2WYe7ys9mrQZQYvCPpvxWTwjaJu6a",
+      "sequenceNumber": 0
+    },
+    "last": {
+      "digest": "82PPNUjBCz876hSnTmKsFWgrH1eFCXfuqjc1M7JTTEj1",
+      "sequenceNumber": 2
+    }
+  }
+}

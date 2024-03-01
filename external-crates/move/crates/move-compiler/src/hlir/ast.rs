@@ -4,9 +4,7 @@
 
 use crate::{
     diagnostics::WarningFilters,
-    expansion::ast::{
-        ability_modifiers_ast_debug, AbilitySet, Attributes, Friend, ModuleIdent, SpecId,
-    },
+    expansion::ast::{ability_modifiers_ast_debug, AbilitySet, Attributes, Friend, ModuleIdent},
     naming::ast::{BuiltinTypeName, BuiltinTypeName_, StructTypeParameter, TParam},
     parser::ast::{
         self as P, BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, ENTRY_MODIFIER,
@@ -26,23 +24,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[derive(Debug, Clone)]
 pub struct Program {
     pub modules: UniqueMap<ModuleIdent, ModuleDefinition>,
-    pub scripts: BTreeMap<Symbol, Script>,
-}
-
-//**************************************************************************************************
-// Scripts
-//**************************************************************************************************
-
-#[derive(Debug, Clone)]
-pub struct Script {
-    pub warning_filter: WarningFilters,
-    // package name metadata from compiler arguments, not used for any language rules
-    pub package_name: Option<Symbol>,
-    pub attributes: Attributes,
-    pub loc: Loc,
-    pub constants: UniqueMap<ConstantName, Constant>,
-    pub function_name: FunctionName,
-    pub function: Function,
 }
 
 //**************************************************************************************************
@@ -144,6 +125,9 @@ pub struct Function {
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
 pub struct Var(pub Name);
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
+pub struct BlockLabel(pub Name);
+
 //**************************************************************************************************
 // Types
 //**************************************************************************************************
@@ -196,12 +180,18 @@ pub enum Statement_ {
         else_block: Block,
     },
     While {
+        name: BlockLabel,
         cond: (Block, Box<Exp>),
         block: Block,
     },
     Loop {
+        name: BlockLabel,
         block: Block,
         has_break: bool,
+    },
+    NamedBlock {
+        name: BlockLabel,
+        block: Block,
     },
 }
 pub type Statement = Spanned<Statement_>;
@@ -229,8 +219,8 @@ pub enum Command_ {
         from_user: bool,
         exp: Exp,
     },
-    Break,
-    Continue,
+    Break(BlockLabel),
+    Continue(BlockLabel),
     IgnoreAndPop {
         pop_num: usize,
         exp: Exp,
@@ -344,8 +334,6 @@ pub enum UnannotatedExp_ {
 
     Unreachable,
 
-    Spec(SpecId, BTreeMap<Var, SingleType>),
-
     UnresolvedError,
 }
 pub type UnannotatedExp = Spanned<UnannotatedExp_>;
@@ -384,7 +372,7 @@ impl Var {
     }
 
     pub fn starts_with_underscore(&self) -> bool {
-        self.0.value.starts_with('_')
+        self.0.value.starts_with('_') || self.0.value.starts_with("$_")
     }
 }
 
@@ -405,7 +393,7 @@ impl Command_ {
     pub fn is_terminal(&self) -> bool {
         use Command_::*;
         match self {
-            Break | Continue => panic!("ICE break/continue not translated to jumps"),
+            Break(_) | Continue(_) => panic!("ICE break/continue not translated to jumps"),
             Assign(_, _) | Mutate(_, _) | IgnoreAndPop { .. } => false,
             Abort(_) | Return { .. } | Jump { .. } | JumpIf { .. } => true,
         }
@@ -414,7 +402,7 @@ impl Command_ {
     pub fn is_exit(&self) -> bool {
         use Command_::*;
         match self {
-            Break | Continue => panic!("ICE break/continue not translated to jumps"),
+            Break(_) | Continue(_) => panic!("ICE break/continue not translated to jumps"),
             Assign(_, _) | Mutate(_, _) | IgnoreAndPop { .. } | Jump { .. } | JumpIf { .. } => {
                 false
             }
@@ -425,7 +413,7 @@ impl Command_ {
     pub fn is_unit(&self) -> bool {
         use Command_::*;
         match self {
-            Break | Continue => panic!("ICE break/continue not translated to jumps"),
+            Break(_) | Continue(_) => panic!("ICE break/continue not translated to jumps"),
             Assign(ls, e) => ls.is_empty() && e.is_unit(),
             IgnoreAndPop { exp: e, .. } => e.is_unit(),
 
@@ -438,7 +426,7 @@ impl Command_ {
 
         let mut successors = BTreeSet::new();
         match self {
-            Break | Continue => panic!("ICE break/continue not translated to jumps"),
+            Break(_) | Continue(_) => panic!("ICE break/continue not translated to jumps"),
             Mutate(_, _) | Assign(_, _) | IgnoreAndPop { .. } => {
                 panic!("ICE Should not be last command in block")
             }
@@ -455,17 +443,34 @@ impl Command_ {
         }
         successors
     }
+
+    pub fn is_hlir_terminal(&self) -> bool {
+        use Command_::*;
+        match self {
+            Assign(_, _) | Mutate(_, _) | IgnoreAndPop { .. } => false,
+            Break(_) | Continue(_) | Abort(_) | Return { .. } => true,
+            Jump { .. } | JumpIf { .. } => panic!("ICE found jump/jump-if in hlir"),
+        }
+    }
 }
 
 impl Exp {
     pub fn is_unit(&self) -> bool {
         self.exp.value.is_unit()
     }
+
+    pub fn is_unreachable(&self) -> bool {
+        self.exp.value.is_unreachable()
+    }
 }
 
 impl UnannotatedExp_ {
     pub fn is_unit(&self) -> bool {
         matches!(self, UnannotatedExp_::Unit { case: _case })
+    }
+
+    pub fn is_unreachable(&self) -> bool {
+        matches!(self, UnannotatedExp_::Unreachable)
     }
 }
 
@@ -715,6 +720,23 @@ impl TName for Var {
     }
 }
 
+impl TName for BlockLabel {
+    type Key = Symbol;
+    type Loc = Loc;
+
+    fn drop_loc(self) -> (Loc, Symbol) {
+        (self.0.loc, self.0.value)
+    }
+
+    fn add_loc(loc: Loc, value: Symbol) -> BlockLabel {
+        BlockLabel(sp(loc, value))
+    }
+
+    fn borrow(&self) -> (&Loc, &Symbol) {
+        (&self.0.loc, &self.0.value)
+    }
+}
+
 impl ModuleCall {
     pub fn is(
         &self,
@@ -771,43 +793,13 @@ impl std::fmt::Display for Label {
 
 impl AstDebug for Program {
     fn ast_debug(&self, w: &mut AstWriter) {
-        let Program { modules, scripts } = self;
+        let Program { modules } = self;
 
         for (m, mdef) in modules.key_cloned_iter() {
             w.write(&format!("module {}", m));
             w.block(|w| mdef.ast_debug(w));
             w.new_line();
         }
-
-        for (n, s) in scripts {
-            w.write(&format!("script {}", n));
-            w.block(|w| s.ast_debug(w));
-            w.new_line()
-        }
-    }
-}
-
-impl AstDebug for Script {
-    fn ast_debug(&self, w: &mut AstWriter) {
-        let Script {
-            warning_filter,
-            package_name,
-            attributes,
-            loc: _loc,
-            constants,
-            function_name,
-            function,
-        } = self;
-        warning_filter.ast_debug(w);
-        if let Some(n) = package_name {
-            w.writeln(&format!("{}", n))
-        }
-        attributes.ast_debug(w);
-        for cdef in constants.key_cloned_iter() {
-            cdef.ast_debug(w);
-            w.new_line();
-        }
-        (*function_name, function).ast_debug(w);
     }
 }
 
@@ -974,6 +966,12 @@ impl AstDebug for Var {
     }
 }
 
+impl AstDebug for BlockLabel {
+    fn ast_debug(&self, w: &mut AstWriter) {
+        w.write(&format!("'{}", self.0))
+    }
+}
+
 impl AstDebug for (ConstantName, &Constant) {
     fn ast_debug(&self, w: &mut AstWriter) {
         let (
@@ -1114,18 +1112,33 @@ impl AstDebug for Statement_ {
                 w.write(" else ");
                 w.block(|w| else_block.ast_debug(w));
             }
-            S::While { cond, block } => {
-                w.write("while (");
+            S::While { name, cond, block } => {
+                w.write("while ");
+                w.write(" (");
                 cond.ast_debug(w);
-                w.write(")");
+                w.write(") ");
+                name.ast_debug(w);
+                w.write(":");
                 w.block(|w| block.ast_debug(w))
             }
-            S::Loop { block, has_break } => {
+            S::Loop {
+                name,
+                block,
+                has_break,
+            } => {
                 w.write("loop");
                 if *has_break {
                     w.write("#has_break");
                 }
                 w.write(" ");
+                name.ast_debug(w);
+                w.write(": ");
+                w.block(|w| block.ast_debug(w))
+            }
+            S::NamedBlock { name, block } => {
+                w.write("named-block ");
+                name.ast_debug(w);
+                w.write(": ");
                 w.block(|w| block.ast_debug(w))
             }
         }
@@ -1159,8 +1172,14 @@ impl AstDebug for Command_ {
                 w.write("return ");
                 e.ast_debug(w);
             }
-            C::Break => w.write("break"),
-            C::Continue => w.write("continue"),
+            C::Break(name) => {
+                w.write("break@");
+                name.ast_debug(w);
+            }
+            C::Continue(name) => {
+                w.write("continue");
+                name.ast_debug(w);
+            }
             C::IgnoreAndPop { pop_num, exp } => {
                 w.write("pop ");
                 w.comma(0..*pop_num, |w, _| w.write("_"));
@@ -1335,14 +1354,6 @@ impl AstDebug for UnannotatedExp_ {
                 w.write(" as ");
                 bt.ast_debug(w);
                 w.write(")");
-            }
-            E::Spec(u, used_locals) => {
-                w.write(&format!("spec #{}", u));
-                if !used_locals.is_empty() {
-                    w.write("uses [");
-                    w.comma(used_locals, |w, (n, st)| w.annotate(|w| n.ast_debug(w), st));
-                    w.write("]");
-                }
             }
             E::UnresolvedError => w.write("_|_"),
             E::Unreachable => w.write("unreachable"),

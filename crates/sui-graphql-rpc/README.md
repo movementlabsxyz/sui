@@ -1,5 +1,18 @@
 # sui-graphql-rpc
 
+## Dev setup
+Note that we use compilation flags to determine the backend for Diesel. If you're using VS Code, make sure to update settings.json with the appropriate features - there should at least be a "pg_backend" (or other backend.)
+```
+"rust-analyzer.cargo.features": ["pg_backend"]
+```
+Consequently, you'll also need to specify the backend when running cargo commands:
+```cargo run --features "pg_backend" --bin sui-graphql-rpc start-server --db-url <DB_URL>```
+
+The order is important:
+1. --features "pg_backend": This part tells Cargo to enable the pg_backend feature.
+2. --bin sui-graphql-rpc: This specifies which binary to run.
+3. start-server --db-url: These are arguments to the binary.
+
 ## Spinning up locally
 
 ### Setting up local db
@@ -38,3 +51,9 @@ Launch GraphiQL IDE at: http://127.0.0.1:8000
 
 ### Launching the server w/ indexer
 For local dev, it might be useful to spin up an indexer as well. Instructions are at [Running standalone indexer](../sui-indexer/README.md#running-standalone-indexer).
+
+## Compatibility with json-rpc
+
+`cargo run --bin sui-test-validator -- --with-indexer --pg-port 5432 --pg-db-name sui_indexer_v2 --graphql-host 127.0.0.1 --graphql-port 9125`
+
+`pnpm --filter @mysten/graphql-transport test:e2e`

@@ -32,6 +32,7 @@ module sui::token {
     use sui::vec_set::{Self, VecSet};
     use sui::dynamic_field as df;
     use sui::transfer;
+    use sui::event;
 
     /// The action is not allowed (defined) in the policy.
     const EUnknownAction: u64 = 0;
@@ -45,12 +46,11 @@ module sui::token {
     const ENotZero: u64 = 4;
     /// The balance is not zero when trying to confirm with `TransferPolicyCap`.
     const ECantConsumeBalance: u64 = 5;
-    /// Trying to perform an owner-gated action without being the owner.
     /// Rule is trying to access a missing config (with type).
-    const ENoConfig: u64 = 7;
+    const ENoConfig: u64 = 6;
     /// Using `confirm_request_mut` without `spent_balance`. Immutable version
     /// of the function must be used instead.
-    const EUseImmutableConfirm: u64 = 8;
+    const EUseImmutableConfirm: u64 = 7;
 
     // === Protected Actions ===
 
@@ -127,12 +127,23 @@ module sui::token {
     /// `Rule` per `TokenPolicy`.
     struct RuleKey<phantom T> has store, copy, drop { is_protected: bool }
 
+    /// An event emitted when a `TokenPolicy` is created and shared. Because
+    /// `TokenPolicy` can only be shared (and potentially frozen in the future),
+    /// we emit this event in the `share_policy` function and mark it as mutable.
+    struct TokenPolicyCreated<phantom T> has copy, drop {
+        /// ID of the `TokenPolicy` that was created.
+        id: ID,
+        /// Whether the `TokenPolicy` is "shared" (mutable) or "frozen"
+        /// (immutable) - TBD.
+        is_mutable: bool,
+    }
+
     /// Create a new `TokenPolicy` and a matching `TokenPolicyCap`.
     /// The `TokenPolicy` must then be shared using the `share_policy` method.
     ///
     /// `TreasuryCap` guarantees full ownership over the currency, and is unique,
     /// hence it is safe to use it for authorization.
-    public fun new<T>(
+    public fun new_policy<T>(
         _treasury_cap: &TreasuryCap<T>, ctx: &mut TxContext
     ): (TokenPolicy<T>, TokenPolicyCap<T>) {
         let policy = TokenPolicy {
@@ -149,10 +160,15 @@ module sui::token {
         (policy, cap)
     }
 
-    #[lint_allow(share_owned)]
+    #[allow(lint(share_owned))]
     /// Share the `TokenPolicy`. Due to `key`-only restriction, it must be
     /// shared after initialization.
     public fun share_policy<T>(policy: TokenPolicy<T>) {
+        event::emit(TokenPolicyCreated<T> {
+            id: object::id(&policy),
+            is_mutable: true,
+        });
+
         transfer::share_object(policy)
     }
 
@@ -277,7 +293,7 @@ module sui::token {
         object::delete(id);
     }
 
-    #[lint_allow(self_transfer)]
+    #[allow(lint(self_transfer))]
     /// Transfer the `Token` to the transaction sender.
     public fun keep<T>(token: Token<T>, ctx: &mut TxContext) {
         transfer::transfer(token, tx_context::sender(ctx))

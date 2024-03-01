@@ -25,7 +25,7 @@ use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointSequenceNumber,
     FullCheckpointContents as CheckpointContents, VerifiedCheckpoint, VerifiedCheckpointContents,
 };
-use sui_types::storage::{ReadStore, WriteStore};
+use sui_types::storage::WriteStore;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::{oneshot, Mutex};
 use tracing::info;
@@ -274,7 +274,6 @@ impl ArchiveReader {
     ) -> Result<()>
     where
         S: WriteStore + Clone,
-        <S as ReadStore>::Error: std::error::Error,
     {
         let (summary_files, start_index, end_index) =
             self.get_summary_files(checkpoint_range.clone()).await?;
@@ -312,6 +311,7 @@ impl ArchiveReader {
                                 let verified_checkpoint = Self::get_or_insert_verified_checkpoint(
                                     &store,
                                     summary.clone(),
+                                    true,
                                 )
                                 .unwrap_or_else(|_| {
                                     panic!(
@@ -367,10 +367,10 @@ impl ArchiveReader {
         checkpoint_range: Range<CheckpointSequenceNumber>,
         txn_counter: Arc<AtomicU64>,
         checkpoint_counter: Arc<AtomicU64>,
+        verify: bool,
     ) -> Result<()>
     where
         S: WriteStore + Clone,
-        <S as ReadStore>::Error: std::error::Error,
     {
         let manifest = self.manifest.lock().await.clone();
 
@@ -441,7 +441,7 @@ impl ArchiveReader {
                         })
                         .try_for_each(|(summary, contents)| {
                             let verified_checkpoint =
-                                Self::get_or_insert_verified_checkpoint(&store, summary)?;
+                                Self::get_or_insert_verified_checkpoint(&store, summary, verify)?;
                             // Verify content
                             let digest = verified_checkpoint.content_digest;
                             contents.verify_digests(digest)?;
@@ -516,7 +516,6 @@ impl ArchiveReader {
     ) -> Result<()>
     where
         S: WriteStore + Clone,
-        <S as ReadStore>::Error: std::error::Error,
     {
         store
             .insert_checkpoint(VerifiedCheckpoint::new_unchecked(certified_checkpoint).borrow())
@@ -527,31 +526,35 @@ impl ArchiveReader {
     fn get_or_insert_verified_checkpoint<S>(
         store: &S,
         certified_checkpoint: CertifiedCheckpointSummary,
+        verify: bool,
     ) -> Result<VerifiedCheckpoint>
     where
         S: WriteStore + Clone,
-        <S as ReadStore>::Error: std::error::Error,
     {
         store
             .get_checkpoint_by_sequence_number(certified_checkpoint.sequence_number)
             .map_err(|e| anyhow!("Store op failed: {e}"))?
             .map(Ok::<VerifiedCheckpoint, anyhow::Error>)
             .unwrap_or_else(|| {
-                // Verify checkpoint summary
-                let prev_checkpoint_seq_num = certified_checkpoint
-                    .sequence_number
-                    .checked_sub(1)
-                    .context("Checkpoint seq num underflow")?;
-                let prev_checkpoint = store
-                    .get_checkpoint_by_sequence_number(prev_checkpoint_seq_num)
-                    .map_err(|e| anyhow!("Store op failed: {e}"))?
-                    .context(format!(
-                        "Missing previous checkpoint {} in store",
-                        prev_checkpoint_seq_num
-                    ))?;
-                let verified_checkpoint =
-                    verify_checkpoint(&prev_checkpoint, &store, certified_checkpoint)
-                        .map_err(|_| anyhow!("Checkpoint verification failed"))?;
+                let verified_checkpoint = if verify {
+                    // Verify checkpoint summary
+                    let prev_checkpoint_seq_num = certified_checkpoint
+                        .sequence_number
+                        .checked_sub(1)
+                        .context("Checkpoint seq num underflow")?;
+                    let prev_checkpoint = store
+                        .get_checkpoint_by_sequence_number(prev_checkpoint_seq_num)
+                        .map_err(|e| anyhow!("Store op failed: {e}"))?
+                        .context(format!(
+                            "Missing previous checkpoint {} in store",
+                            prev_checkpoint_seq_num
+                        ))?;
+
+                    verify_checkpoint(&prev_checkpoint, store, certified_checkpoint)
+                        .map_err(|_| anyhow!("Checkpoint verification failed"))?
+                } else {
+                    VerifiedCheckpoint::new_unchecked(certified_checkpoint)
+                };
                 // Insert checkpoint summary
                 store
                     .insert_checkpoint(&verified_checkpoint)

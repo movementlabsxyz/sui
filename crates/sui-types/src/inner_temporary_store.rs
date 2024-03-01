@@ -3,9 +3,10 @@
 
 use crate::base_types::{SequenceNumber, VersionDigest};
 use crate::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
+use crate::error::SuiResult;
 use crate::execution::DynamicallyLoadedObjectMetadata;
-use crate::storage::InputKey;
-use crate::storage::PackageObjectArc;
+use crate::storage::PackageObject;
+use crate::storage::{BackingPackageStore, InputKey};
 use crate::{
     base_types::ObjectID,
     object::{Object, Owner},
@@ -18,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub type WrittenObjects = BTreeMap<ObjectID, Object>;
-pub type ObjectMap = BTreeMap<ObjectID, Arc<Object>>;
+pub type ObjectMap = BTreeMap<ObjectID, Object>;
 pub type TxCoins = (ObjectMap, WrittenObjects);
 
 #[derive(Debug, Clone)]
@@ -31,7 +32,7 @@ pub struct InnerTemporaryStore {
     pub events: TransactionEvents,
     pub max_binary_format_version: u32,
     pub no_extraneous_module_bytes: bool,
-    pub runtime_packages_loaded_from_db: BTreeMap<ObjectID, PackageObjectArc>,
+    pub runtime_packages_loaded_from_db: BTreeMap<ObjectID, PackageObject>,
     pub lamport_version: SequenceNumber,
 }
 
@@ -121,5 +122,34 @@ where
             }
         }
         self.fallback.get_module_by_id(id)
+    }
+}
+
+pub struct TemporaryPackageStore<'a, R> {
+    temp_store: &'a InnerTemporaryStore,
+    fallback: R,
+}
+
+impl<'a, R> TemporaryPackageStore<'a, R> {
+    pub fn new(temp_store: &'a InnerTemporaryStore, fallback: R) -> Self {
+        Self {
+            temp_store,
+            fallback,
+        }
+    }
+}
+
+impl<R> BackingPackageStore for TemporaryPackageStore<'_, R>
+where
+    R: BackingPackageStore,
+{
+    fn get_package_object(&self, package_id: &ObjectID) -> SuiResult<Option<PackageObject>> {
+        // We first check the objects in the temporary store it is possible to read packages that are
+        // just written in the same transaction.
+        if let Some(obj) = self.temp_store.written.get(package_id) {
+            Ok(Some(PackageObject::new(obj.clone())))
+        } else {
+            self.fallback.get_package_object(package_id)
+        }
     }
 }

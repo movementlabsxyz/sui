@@ -19,7 +19,7 @@ use move_core_types::{
     vm_status::{StatusCode, StatusType},
 };
 use move_vm_config::runtime::VMRuntimeLimitsConfig;
-#[cfg(debug_assertions)]
+#[cfg(feature = "gas-profiler")]
 use move_vm_profiler::GasProfiler;
 use move_vm_profiler::{
     profile_close_frame, profile_close_instr, profile_open_frame, profile_open_instr,
@@ -29,8 +29,8 @@ use move_vm_types::{
     gas::{GasMeter, SimpleInstruction},
     loaded_data::runtime_types::Type,
     values::{
-        self, GlobalValue, IntegerValue, Locals, Reference, Struct, StructRef, VMValueCast, Value,
-        Vector, VectorRef,
+        self, IntegerValue, Locals, Reference, Struct, StructRef, VMValueCast, Value, Vector,
+        VectorRef,
     },
     views::TypeView,
 };
@@ -116,7 +116,6 @@ impl Interpreter {
             call_stack: CallStack::new(),
             runtime_limits_config: loader.vm_config().runtime_limits_config.clone(),
         };
-
         profile_open_frame!(gas_meter, function.pretty_string());
 
         if function.is_native() {
@@ -132,21 +131,14 @@ impl Interpreter {
             let return_values = interpreter
                 .call_native_return_values(
                     &resolver,
-                    data_store,
                     gas_meter,
                     extensions,
                     function.clone(),
                     &ty_args,
                 )
-                .map_err(|e| match function.module_id() {
-                    Some(id) => e
-                        .at_code_offset(function.index(), 0)
-                        .finish(Location::Module(id.clone())),
-                    None => PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
-                        .with_message(
-                            "Unexpected native function not located in a module".to_owned(),
-                        )
-                        .finish(Location::Undefined),
+                .map_err(|e| {
+                    e.at_code_offset(function.index(), 0)
+                        .finish(Location::Module(function.module_id().clone()))
                 })?;
 
             profile_close_frame!(gas_meter, function.pretty_string());
@@ -194,10 +186,9 @@ impl Interpreter {
             .map_err(|err| self.set_location(err))?;
         loop {
             let resolver = current_frame.resolver(link_context, loader);
-            let exit_code =
-                current_frame //self
-                    .execute_code(&resolver, &mut self, data_store, gas_meter)
-                    .map_err(|err| self.maybe_core_dump(err, &current_frame))?;
+            let exit_code = current_frame //self
+                .execute_code(&resolver, &mut self, gas_meter)
+                .map_err(|err| self.maybe_core_dump(err, &current_frame))?;
             match exit_code {
                 ExitCode::Return => {
                     let non_ref_vals = current_frame
@@ -211,6 +202,7 @@ impl Interpreter {
                         .map_err(|e| self.set_location(e))?;
 
                     profile_close_frame!(gas_meter, current_frame.function.pretty_string());
+
                     if let Some(frame) = self.call_stack.pop() {
                         // Note: the caller will find the callee's return values at the top of the shared operand stack
                         current_frame = frame;
@@ -222,19 +214,12 @@ impl Interpreter {
                 }
                 ExitCode::Call(fh_idx) => {
                     let func = resolver.function_from_handle(fh_idx);
-                    // Compiled out in release mode
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "gas-profiler")]
                     let func_name = func.pretty_string();
                     profile_open_frame!(gas_meter, func_name.clone());
 
                     // Charge gas
-                    let module_id = func
-                        .module_id()
-                        .ok_or_else(|| {
-                            PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
-                                .with_message("Failed to get native function module id".to_string())
-                        })
-                        .map_err(|e| set_err_info!(current_frame, e))?;
+                    let module_id = func.module_id();
                     gas_meter
                         .charge_call(
                             module_id,
@@ -247,17 +232,11 @@ impl Interpreter {
                         .map_err(|e| set_err_info!(current_frame, e))?;
 
                     if func.is_native() {
-                        self.call_native(
-                            &resolver,
-                            data_store,
-                            gas_meter,
-                            extensions,
-                            func,
-                            vec![],
-                        )?;
+                        self.call_native(&resolver, gas_meter, extensions, func, vec![])?;
+
                         current_frame.pc += 1; // advance past the Call instruction in the caller
 
-                        profile_close_frame!(gas_meter, func_name);
+                        profile_close_frame!(gas_meter, func_name.clone());
                         continue;
                     }
                     let frame = self
@@ -278,19 +257,12 @@ impl Interpreter {
                         .instantiate_generic_function(idx, current_frame.ty_args())
                         .map_err(|e| set_err_info!(current_frame, e))?;
                     let func = resolver.function_from_instantiation(idx);
-                    // Compiled out in release mode
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "gas-profiler")]
                     let func_name = func.pretty_string();
                     profile_open_frame!(gas_meter, func_name.clone());
 
                     // Charge gas
-                    let module_id = func
-                        .module_id()
-                        .ok_or_else(|| {
-                            PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
-                                .with_message("Failed to get native function module id".to_string())
-                        })
-                        .map_err(|e| set_err_info!(current_frame, e))?;
+                    let module_id = func.module_id();
                     gas_meter
                         .charge_call_generic(
                             module_id,
@@ -304,12 +276,9 @@ impl Interpreter {
                         .map_err(|e| set_err_info!(current_frame, e))?;
 
                     if func.is_native() {
-                        self.call_native(
-                            &resolver, data_store, gas_meter, extensions, func, ty_args,
-                        )?;
+                        self.call_native(&resolver, gas_meter, extensions, func, ty_args)?;
                         current_frame.pc += 1; // advance past the Call instruction in the caller
-
-                        profile_close_frame!(gas_meter, func_name);
+                        profile_close_frame!(gas_meter, func_name.clone());
 
                         continue;
                     }
@@ -374,23 +343,15 @@ impl Interpreter {
     fn call_native(
         &mut self,
         resolver: &Resolver,
-        data_store: &mut dyn DataStore,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
         function: Arc<Function>,
         ty_args: Vec<Type>,
     ) -> VMResult<()> {
         // Note: refactor if native functions push a frame on the stack
-        self.call_native_impl(
-            resolver,
-            data_store,
-            gas_meter,
-            extensions,
-            function.clone(),
-            ty_args,
-        )
-        .map_err(|e| match function.module_id() {
-            Some(id) => {
+        self.call_native_impl(resolver, gas_meter, extensions, function.clone(), ty_args)
+            .map_err(|e| {
+                let id = function.module_id();
                 let e = if resolver.loader().vm_config().error_execution_state {
                     e.with_exec_state(self.get_internal_state())
                 } else {
@@ -398,19 +359,12 @@ impl Interpreter {
                 };
                 e.at_code_offset(function.index(), 0)
                     .finish(Location::Module(id.clone()))
-            }
-            None => {
-                let err = PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
-                    .with_message("Unexpected native function not located in a module".to_owned());
-                self.set_location(err)
-            }
-        })
+            })
     }
 
     fn call_native_impl(
         &mut self,
         resolver: &Resolver,
-        data_store: &mut dyn DataStore,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
         function: Arc<Function>,
@@ -418,7 +372,6 @@ impl Interpreter {
     ) -> PartialVMResult<()> {
         let return_values = self.call_native_return_values(
             resolver,
-            data_store,
             gas_meter,
             extensions,
             function.clone(),
@@ -437,7 +390,6 @@ impl Interpreter {
     fn call_native_return_values(
         &mut self,
         resolver: &Resolver,
-        data_store: &mut dyn DataStore,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
         function: Arc<Function>,
@@ -450,13 +402,8 @@ impl Interpreter {
             args.push_front(self.operand_stack.pop()?);
         }
 
-        let mut native_context = NativeContext::new(
-            self,
-            data_store,
-            resolver,
-            extensions,
-            gas_meter.remaining_gas(),
-        );
+        let mut native_context =
+            NativeContext::new(self, resolver, extensions, gas_meter.remaining_gas());
         let native_function = function.get_native()?;
 
         gas_meter.charge_native_function_before_execution(
@@ -536,147 +483,6 @@ impl Interpreter {
         self.binop(|lhs, rhs| Ok(Value::bool(f(lhs, rhs)?)))
     }
 
-    /// Loads a resource from the data store and return the number of bytes read from the storage.
-    fn load_resource<'b>(
-        gas_meter: &mut impl GasMeter,
-        data_store: &'b mut impl DataStore,
-        addr: AccountAddress,
-        ty: &Type,
-    ) -> PartialVMResult<&'b mut GlobalValue> {
-        match data_store.load_resource(addr, ty) {
-            Ok((gv, load_res)) => {
-                if let Some(loaded) = load_res {
-                    let opt = match loaded {
-                        Some(num_bytes) => {
-                            let view = gv.view().ok_or_else(|| {
-                                PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
-                                    .with_message(
-                                        "Failed to create view for global value".to_owned(),
-                                    )
-                            })?;
-
-                            Some((num_bytes, view))
-                        }
-                        None => None,
-                    };
-                    gas_meter.charge_load_resource(opt)?;
-                }
-                Ok(gv)
-            }
-            Err(e) => {
-                error!(
-                    "[VM] error loading resource at ({}, {:?}): {:?} from data store",
-                    addr, ty, e
-                );
-                Err(e)
-            }
-        }
-    }
-
-    /// BorrowGlobal (mutable and not) opcode.
-    fn borrow_global(
-        &mut self,
-        is_mut: bool,
-        is_generic: bool,
-        loader: &Loader,
-        gas_meter: &mut impl GasMeter,
-        data_store: &mut impl DataStore,
-        addr: AccountAddress,
-        ty: &Type,
-    ) -> PartialVMResult<()> {
-        let res = Self::load_resource(gas_meter, data_store, addr, ty)?.borrow_global();
-        gas_meter.charge_borrow_global(
-            is_mut,
-            is_generic,
-            TypeWithLoader { ty, loader },
-            res.is_ok(),
-        )?;
-        self.operand_stack.push(res?)?;
-        Ok(())
-    }
-
-    /// Exists opcode.
-    fn exists(
-        &mut self,
-        is_generic: bool,
-        loader: &Loader,
-        gas_meter: &mut impl GasMeter,
-        data_store: &mut impl DataStore,
-        addr: AccountAddress,
-        ty: &Type,
-    ) -> PartialVMResult<()> {
-        let gv = Self::load_resource(gas_meter, data_store, addr, ty)?;
-        let exists = gv.exists()?;
-        gas_meter.charge_exists(is_generic, TypeWithLoader { ty, loader }, exists)?;
-        self.operand_stack.push(Value::bool(exists))?;
-        Ok(())
-    }
-
-    /// MoveFrom opcode.
-    fn move_from(
-        &mut self,
-        is_generic: bool,
-        loader: &Loader,
-        gas_meter: &mut impl GasMeter,
-        data_store: &mut impl DataStore,
-        addr: AccountAddress,
-        ty: &Type,
-    ) -> PartialVMResult<()> {
-        let resource = match Self::load_resource(gas_meter, data_store, addr, ty)?.move_from() {
-            Ok(resource) => {
-                gas_meter.charge_move_from(
-                    is_generic,
-                    TypeWithLoader { ty, loader },
-                    Some(&resource),
-                )?;
-                resource
-            }
-            Err(err) => {
-                let val: Option<&Value> = None;
-                gas_meter.charge_move_from(is_generic, TypeWithLoader { ty, loader }, val)?;
-                return Err(err);
-            }
-        };
-        self.operand_stack.push(resource)?;
-        Ok(())
-    }
-
-    /// MoveTo opcode.
-    fn move_to(
-        &mut self,
-        is_generic: bool,
-        loader: &Loader,
-        gas_meter: &mut impl GasMeter,
-        data_store: &mut impl DataStore,
-        addr: AccountAddress,
-        ty: &Type,
-        resource: Value,
-    ) -> PartialVMResult<()> {
-        let gv = Self::load_resource(gas_meter, data_store, addr, ty)?;
-        // NOTE(Gas): To maintain backward compatibility, we need to charge gas after attempting
-        //            the move_to operation.
-        match gv.move_to(resource) {
-            Ok(()) => {
-                gas_meter.charge_move_to(
-                    is_generic,
-                    TypeWithLoader { ty, loader },
-                    gv.view().unwrap(),
-                    true,
-                )?;
-                Ok(())
-            }
-            Err((err, resource)) => {
-                gas_meter.charge_move_to(
-                    is_generic,
-                    TypeWithLoader { ty, loader },
-                    &resource,
-                    false,
-                )?;
-                Err(err)
-            }
-        }
-    }
-
     //
     // Debugging and logging helpers.
     //
@@ -716,9 +522,9 @@ impl Interpreter {
         let func = &frame.function;
 
         debug_write!(buf, "    [{}] ", idx)?;
-        if let Some(module) = func.module_id() {
-            debug_write!(buf, "{}::{}::", module.address(), module.name(),)?;
-        }
+        let module = func.module_id();
+        debug_write!(buf, "{}::{}::", module.address(), module.name(),)?;
+
         debug_write!(buf, "{}", func.name())?;
         let ty_args = frame.ty_args();
         let mut ty_tags = vec![];
@@ -863,7 +669,7 @@ impl Interpreter {
             .take(count)
             .map(|frame| {
                 (
-                    frame.function.module_id().cloned(),
+                    frame.function.module_id().clone(),
                     frame.function.index(),
                     frame.pc,
                 )
@@ -990,10 +796,9 @@ impl Frame {
         &mut self,
         resolver: &Resolver,
         interpreter: &mut Interpreter,
-        data_store: &mut impl DataStore,
         gas_meter: &mut impl GasMeter,
     ) -> VMResult<ExitCode> {
-        self.execute_code_impl(resolver, interpreter, data_store, gas_meter)
+        self.execute_code_impl(resolver, interpreter, gas_meter)
             .map_err(|e| {
                 let e = if resolver.loader().vm_config().error_execution_state {
                     e.with_exec_state(interpreter.get_internal_state())
@@ -1012,7 +817,6 @@ impl Frame {
         function: &Arc<Function>,
         resolver: &Resolver,
         interpreter: &mut Interpreter,
-        data_store: &mut impl DataStore,
         gas_meter: &mut impl GasMeter,
         instruction: &Bytecode,
     ) -> PartialVMResult<InstrRet> {
@@ -1371,99 +1175,17 @@ impl Frame {
                     .operand_stack
                     .push(Value::bool(!lhs.equals(&rhs)?))?;
             }
-            Bytecode::MutBorrowGlobal(sd_idx) | Bytecode::ImmBorrowGlobal(sd_idx) => {
-                let is_mut = matches!(instruction, Bytecode::MutBorrowGlobal(_));
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.get_struct_type(*sd_idx);
-                interpreter.borrow_global(
-                    is_mut,
-                    false,
-                    resolver.loader(),
-                    gas_meter,
-                    data_store,
-                    addr,
-                    &ty,
-                )?;
-            }
-            Bytecode::MutBorrowGlobalGeneric(si_idx) | Bytecode::ImmBorrowGlobalGeneric(si_idx) => {
-                let is_mut = matches!(instruction, Bytecode::MutBorrowGlobalGeneric(_));
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.instantiate_generic_type(*si_idx, ty_args)?;
-                interpreter.borrow_global(
-                    is_mut,
-                    true,
-                    resolver.loader(),
-                    gas_meter,
-                    data_store,
-                    addr,
-                    &ty,
-                )?;
-            }
-            Bytecode::Exists(sd_idx) => {
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.get_struct_type(*sd_idx);
-                interpreter.exists(false, resolver.loader(), gas_meter, data_store, addr, &ty)?;
-            }
-            Bytecode::ExistsGeneric(si_idx) => {
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.instantiate_generic_type(*si_idx, ty_args)?;
-                interpreter.exists(true, resolver.loader(), gas_meter, data_store, addr, &ty)?;
-            }
-            Bytecode::MoveFrom(sd_idx) => {
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.get_struct_type(*sd_idx);
-                interpreter.move_from(
-                    false,
-                    resolver.loader(),
-                    gas_meter,
-                    data_store,
-                    addr,
-                    &ty,
-                )?;
-            }
-            Bytecode::MoveFromGeneric(si_idx) => {
-                let addr = interpreter.operand_stack.pop_as::<AccountAddress>()?;
-                let ty = resolver.instantiate_generic_type(*si_idx, ty_args)?;
-                interpreter.move_from(true, resolver.loader(), gas_meter, data_store, addr, &ty)?;
-            }
-            Bytecode::MoveTo(sd_idx) => {
-                let resource = interpreter.operand_stack.pop()?;
-                let signer_reference = interpreter.operand_stack.pop_as::<StructRef>()?;
-                let addr = signer_reference
-                    .borrow_field(0)?
-                    .value_as::<Reference>()?
-                    .read_ref()?
-                    .value_as::<AccountAddress>()?;
-                let ty = resolver.get_struct_type(*sd_idx);
-                // REVIEW: Can we simplify Interpreter::move_to?
-                interpreter.move_to(
-                    false,
-                    resolver.loader(),
-                    gas_meter,
-                    data_store,
-                    addr,
-                    &ty,
-                    resource,
-                )?;
-            }
-            Bytecode::MoveToGeneric(si_idx) => {
-                let resource = interpreter.operand_stack.pop()?;
-                let signer_reference = interpreter.operand_stack.pop_as::<StructRef>()?;
-                let addr = signer_reference
-                    .borrow_field(0)?
-                    .value_as::<Reference>()?
-                    .read_ref()?
-                    .value_as::<AccountAddress>()?;
-                let ty = resolver.instantiate_generic_type(*si_idx, ty_args)?;
-                interpreter.move_to(
-                    true,
-                    resolver.loader(),
-                    gas_meter,
-                    data_store,
-                    addr,
-                    &ty,
-                    resource,
-                )?;
+            Bytecode::MutBorrowGlobalDeprecated(_)
+            | Bytecode::ImmBorrowGlobalDeprecated(_)
+            | Bytecode::MutBorrowGlobalGenericDeprecated(_)
+            | Bytecode::ImmBorrowGlobalGenericDeprecated(_)
+            | Bytecode::ExistsDeprecated(_)
+            | Bytecode::ExistsGenericDeprecated(_)
+            | Bytecode::MoveFromDeprecated(_)
+            | Bytecode::MoveFromGenericDeprecated(_)
+            | Bytecode::MoveToDeprecated(_)
+            | Bytecode::MoveToGenericDeprecated(_) => {
+                unreachable!("Global bytecodes deprecated")
             }
             Bytecode::FreezeRef => {
                 gas_meter.charge_simple_instr(S::FreezeRef)?;
@@ -1558,7 +1280,6 @@ impl Frame {
         &mut self,
         resolver: &Resolver,
         interpreter: &mut Interpreter,
-        data_store: &mut impl DataStore,
         gas_meter: &mut impl GasMeter,
     ) -> PartialVMResult<ExitCode> {
         let code = self.function.code();
@@ -1590,7 +1311,6 @@ impl Frame {
                     &self.function,
                     resolver,
                     interpreter,
-                    data_store,
                     gas_meter,
                     instruction,
                 )?;
@@ -1633,10 +1353,7 @@ impl Frame {
     }
 
     fn location(&self) -> Location {
-        match self.function.module_id() {
-            None => Location::Script,
-            Some(id) => Location::Module(id.clone()),
-        }
+        Location::Module(self.function.module_id().clone())
     }
 
     fn check_depth_of_type(resolver: &Resolver, ty: &Type) -> PartialVMResult<u64> {

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    db::{PgConnectionConfig, PgConnectionPoolConfig, PgPoolConnection},
     errors::IndexerError,
-    models_v2::{
+    models::{
         address_metrics::StoredAddressMetrics,
         checkpoints::StoredCheckpoint,
         display::StoredDisplay,
@@ -16,28 +17,29 @@ use crate::{
         transactions::StoredTransaction,
         tx_indices::TxSequenceNumber,
     },
-    schema_v2::{
+    schema::{
         address_metrics, checkpoints, display, epochs, events, move_call_metrics, objects,
-        packages, transactions,
+        objects_snapshot, packages, transactions,
     },
-    types_v2::{IndexerResult, OwnerType},
-    PgConnectionConfig, PgConnectionPoolConfig, PgPoolConnection,
+    types::{IndexerResult, OwnerType},
 };
 use anyhow::{anyhow, Result};
 use cached::proc_macro::cached;
 use cached::SizedCache;
 use diesel::{
-    r2d2::ConnectionManager, ExpressionMethods, OptionalExtension, PgConnection, QueryDsl,
-    RunQueryDsl,
+    dsl::sql, r2d2::ConnectionManager, sql_types::Bool, ExpressionMethods, OptionalExtension,
+    PgConnection, QueryDsl, RunQueryDsl, TextExpressionMethods,
 };
 use fastcrypto::encoding::Encoding;
 use fastcrypto::encoding::Hex;
 use itertools::{any, Itertools};
+use move_core_types::annotated_value::MoveStructLayout;
 use move_core_types::language_storage::StructTag;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
+use sui_json_rpc_types::DisplayFieldsResponse;
 use sui_json_rpc_types::{
     AddressMetrics, CheckpointId, EpochInfo, EventFilter, MoveCallMetrics, MoveFunctionName,
     NetworkMetrics, SuiEvent, SuiObjectDataFilter, SuiTransactionBlockResponse, TransactionFilter,
@@ -46,7 +48,9 @@ use sui_json_rpc_types::{
     Balance, Coin as SuiCoin, SuiCoinMetadata, SuiTransactionBlockEffects,
     SuiTransactionBlockEffectsAPI,
 };
-use sui_types::{balance::Supply, coin::TreasuryCap, dynamic_field::DynamicFieldName};
+use sui_types::{
+    balance::Supply, coin::TreasuryCap, dynamic_field::DynamicFieldName, object::MoveObject,
+};
 use sui_types::{
     base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, VersionNumber},
     committee::EpochId,
@@ -65,7 +69,7 @@ pub const EVENT_SEQUENCE_NUMBER_STR: &str = "event_sequence_number";
 
 #[derive(Clone)]
 pub struct IndexerReader {
-    pool: crate::PgConnectionPool,
+    pool: crate::db::PgConnectionPool,
     package_cache: PackageCache,
 }
 
@@ -124,6 +128,22 @@ impl IndexerReader {
             .map_err(|e| IndexerError::PostgresReadError(e.to_string()))
     }
 
+    pub fn run_query_repeatable<T, E, F>(&self, query: F) -> Result<T, IndexerError>
+    where
+        F: FnOnce(&mut PgConnection) -> Result<T, E>,
+        E: From<diesel::result::Error> + std::error::Error,
+    {
+        blocking_call_is_ok_or_panic();
+
+        let mut connection = self.get_connection()?;
+        connection
+            .build_transaction()
+            .read_only()
+            .repeatable_read()
+            .run(query)
+            .map_err(|e| IndexerError::PostgresReadError(e.to_string()))
+    }
+
     pub async fn spawn_blocking<F, R, E>(&self, f: F) -> Result<R, E>
     where
         F: FnOnce(Self) -> Result<R, E> + Send + 'static,
@@ -149,6 +169,16 @@ impl IndexerReader {
         T: Send + 'static,
     {
         self.spawn_blocking(move |this| this.run_query(query)).await
+    }
+
+    pub async fn run_query_repeatable_async<T, E, F>(&self, query: F) -> Result<T, IndexerError>
+    where
+        F: FnOnce(&mut PgConnection) -> Result<T, E> + Send + 'static,
+        E: From<diesel::result::Error> + std::error::Error + Send + 'static,
+        T: Send + 'static,
+    {
+        self.spawn_blocking(move |this| this.run_query_repeatable(query))
+            .await
     }
 }
 
@@ -390,6 +420,31 @@ impl IndexerReader {
         Ok(system_state)
     }
 
+    /// Retrieve the system state data for the given epoch. If no epoch is given,
+    /// it will retrieve the latest epoch's data and return the system state.
+    /// System state of the an epoch is written at the end of the epoch, so system state
+    /// of the current epoch is empty until the epoch ends. You can call
+    /// `get_latest_sui_system_state` for current epoch instead.
+    pub fn get_epoch_sui_system_state(
+        &self,
+        epoch: Option<EpochId>,
+    ) -> Result<SuiSystemStateSummary, IndexerError> {
+        let stored_epoch = self.get_epoch_info_from_db(epoch)?;
+        let stored_epoch = match stored_epoch {
+            Some(stored_epoch) => stored_epoch,
+            None => return Err(IndexerError::InvalidArgumentError("Invalid epoch".into())),
+        };
+
+        let system_state: SuiSystemStateSummary = bcs::from_bytes(&stored_epoch.system_state)
+            .map_err(|_| {
+                IndexerError::PersistentStorageDataCorruptionError(format!(
+                    "Failed to deserialize `system_state` for epoch {:?}",
+                    epoch,
+                ))
+            })?;
+        Ok(system_state)
+    }
+
     pub fn get_checkpoint_from_db(
         &self,
         checkpoint_id: CheckpointId,
@@ -558,41 +613,14 @@ impl IndexerReader {
         cursor: Option<ObjectID>,
         limit: usize,
     ) -> Result<Vec<StoredObject>, IndexerError> {
-        let object_types = Self::extract_struct_filters(filter)?;
-        self.spawn_blocking(move |this| {
-            this.get_owned_objects_impl(address, object_types, cursor, limit)
-        })
-        .await
-    }
-
-    fn extract_struct_filters(
-        filter: Option<SuiObjectDataFilter>,
-    ) -> Result<Option<Vec<String>>, IndexerError> {
-        if filter.is_none() {
-            return Ok(None);
-        }
-        match filter.unwrap() {
-            SuiObjectDataFilter::StructType (struct_tag ) => Ok(Some(vec![struct_tag.to_canonical_string(/* with_prefix */ true)])),
-            SuiObjectDataFilter::MatchAny(filters) => {
-                filters.iter().map(|filter| {
-                    match filter {
-                        SuiObjectDataFilter::StructType (struct_tag ) => Ok(struct_tag.to_canonical_string(/* with_prefix */ true)),
-                        _ => Err(IndexerError::InvalidArgumentError(
-                            "Invalid filter type. Only struct filters and MatchAny of struct filters are supported.".into(),
-                        )),
-                    }
-                }).collect::<Result<Vec<_>, _>>().map(Some)
-            }
-            _ => Err(IndexerError::InvalidArgumentError(
-                "Invalid filter type. Only struct filters and MatchAny of struct filters are supported.".into(),
-            )),
-        }
+        self.spawn_blocking(move |this| this.get_owned_objects_impl(address, filter, cursor, limit))
+            .await
     }
 
     fn get_owned_objects_impl(
         &self,
         address: SuiAddress,
-        object_types: Option<Vec<String>>,
+        filter: Option<SuiObjectDataFilter>,
         cursor: Option<ObjectID>,
         limit: usize,
     ) -> Result<Vec<StoredObject>, IndexerError> {
@@ -600,16 +628,59 @@ impl IndexerReader {
             let mut query = objects::dsl::objects
                 .filter(objects::dsl::owner_type.eq(OwnerType::Address as i16))
                 .filter(objects::dsl::owner_id.eq(address.to_vec()))
+                .order(objects::dsl::object_id.asc())
                 .limit(limit as i64)
                 .into_boxed();
-            if let Some(object_types) = object_types {
-                query = query.filter(objects::dsl::object_type.eq_any(object_types));
+            if let Some(filter) = filter {
+                match filter {
+                    SuiObjectDataFilter::StructType (struct_tag ) => {
+                        let object_type = struct_tag.to_canonical_string(/* with_prefix */ true);
+                        query = query.filter(objects::dsl::object_type.like(format!("{}%",object_type)));
+                    },
+                    SuiObjectDataFilter::MatchAny(filters) => {
+                        let mut condition = "(".to_string();
+                        for (i, filter) in filters.iter().enumerate() {
+                            if let SuiObjectDataFilter::StructType (struct_tag) = filter {
+                                let object_type = struct_tag.to_canonical_string(/* with_prefix */ true);
+                                if i == 0 {
+                                    condition += format!("objects.object_type LIKE '{}%'",object_type).as_str();
+                                } else {
+                                    condition += format!(" OR objects.object_type LIKE '{}%'",object_type).as_str();
+                                }
+                            } else {
+                                return Err(IndexerError::InvalidArgumentError(
+                                    "Invalid filter type. Only struct, MatchAny and MatchNone of struct filters are supported.".into(),
+                                ));
+                            }
+                        }
+                        condition += ")";
+                        query = query.filter(sql::<Bool>(&condition));
+                    },
+                    SuiObjectDataFilter::MatchNone(filters) => {
+                        for filter in filters {
+                            if let SuiObjectDataFilter::StructType (struct_tag) = filter {
+                                let object_type = struct_tag.to_canonical_string(/* with_prefix */ true);
+                                query = query.filter(objects::dsl::object_type.not_like(format!("{}%", object_type)));
+                            } else {
+                                return Err(IndexerError::InvalidArgumentError(
+                                    "Invalid filter type. Only struct, MatchAny and MatchNone of struct filters are supported.".into(),
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(IndexerError::InvalidArgumentError(
+                            "Invalid filter type. Only struct, MatchAny and MatchNone of struct filters are supported.".into(),
+                        ));
+                    }
+                }
             }
 
             if let Some(object_cursor) = cursor {
                 query = query.filter(objects::dsl::object_id.gt(object_cursor.to_vec()));
             }
-            query.load::<StoredObject>(conn)
+
+            query.load::<StoredObject>(conn).map_err(|e| IndexerError::PostgresReadError(e.to_string()))
         })
     }
 
@@ -976,12 +1047,13 @@ impl IndexerReader {
             .into_iter()
             .enumerate()
             .map(|(i, event)| {
+                let layout = MoveObject::get_layout_from_struct_tag(event.type_.clone(), self)?;
                 sui_json_rpc_types::SuiEvent::try_from(
                     event,
                     digest,
                     i as u64,
                     Some(timestamp_ms as u64),
-                    self,
+                    layout,
                 )
             })
             .collect::<Result<Vec<_>, _>>()
@@ -1034,7 +1106,7 @@ impl IndexerReader {
         limit: usize,
         descending_order: bool,
     ) -> IndexerResult<Vec<SuiEvent>> {
-        let (tx_seq, event_seq) = if let Some(cursor) = cursor.clone() {
+        let (tx_seq, event_seq) = if let Some(cursor) = cursor {
             let EventID {
                 tx_digest,
                 event_seq,
@@ -1262,7 +1334,7 @@ impl IndexerReader {
         Ok(objects)
     }
 
-    pub fn bcs_name_from_dynamic_field_name(
+    fn bcs_name_from_dynamic_field_name(
         &self,
         name: &DynamicFieldName,
     ) -> Result<Vec<u8>, IndexerError> {
@@ -1271,6 +1343,15 @@ impl IndexerReader {
         let sui_json_value = sui_json::SuiJsonValue::new(name.value.clone())?;
         let name_bcs_value = sui_json_value.to_bcs_bytes(&layout)?;
         Ok(name_bcs_value)
+    }
+
+    pub async fn bcs_name_from_dynamic_field_name_in_blocking_task(
+        &self,
+        name: &DynamicFieldName,
+    ) -> Result<Vec<u8>, IndexerError> {
+        let name = name.clone();
+        self.spawn_blocking(move |this| this.bcs_name_from_dynamic_field_name(&name))
+            .await
     }
 
     fn get_object_refs(
@@ -1422,7 +1503,10 @@ impl IndexerReader {
         tracing::debug!("get coin balances query: {query}");
         let coin_balances =
             self.run_query(|conn| diesel::sql_query(query).load::<CoinBalance>(conn))?;
-        Ok(coin_balances.into_iter().map(|cb| cb.into()).collect())
+        coin_balances
+            .into_iter()
+            .map(|cb| cb.try_into())
+            .collect::<IndexerResult<Vec<_>>>()
     }
 
     pub fn get_latest_network_metrics(&self) -> IndexerResult<NetworkMetrics> {
@@ -1538,6 +1622,33 @@ impl IndexerReader {
             .collect())
     }
 
+    pub(crate) async fn get_display_fields(
+        &self,
+        original_object: &sui_types::object::Object,
+        original_layout: &Option<MoveStructLayout>,
+    ) -> Result<DisplayFieldsResponse, IndexerError> {
+        let (object_type, layout) = if let Some((object_type, layout)) =
+            sui_json_rpc::read_api::get_object_type_and_struct(original_object, original_layout)
+                .map_err(|e| IndexerError::GenericError(e.to_string()))?
+        {
+            (object_type, layout)
+        } else {
+            return Ok(DisplayFieldsResponse {
+                data: None,
+                error: None,
+            });
+        };
+
+        if let Some(display_object) = self.get_display_object_by_type(&object_type).await? {
+            return sui_json_rpc::read_api::get_rendered_fields(display_object.fields, &layout)
+                .map_err(|e| IndexerError::GenericError(e.to_string()));
+        }
+        Ok(DisplayFieldsResponse {
+            data: None,
+            error: None,
+        })
+    }
+
     pub async fn get_coin_metadata_in_blocking_task(
         &self,
         coin_struct: StructTag,
@@ -1589,6 +1700,31 @@ impl IndexerReader {
                 )))?;
         Ok(TreasuryCap::try_from(treasury_cap_obj_object)?.total_supply)
     }
+
+    pub fn get_consistent_read_range(&self) -> Result<(i64, i64), IndexerError> {
+        let latest_checkpoint_sequence = self
+            .run_query(|conn| {
+                checkpoints::table
+                    .select(checkpoints::sequence_number)
+                    .order(checkpoints::sequence_number.desc())
+                    .first::<i64>(conn)
+                    .optional()
+            })?
+            .unwrap_or_default();
+        let latest_object_snapshot_checkpoint_sequence = self
+            .run_query(|conn| {
+                objects_snapshot::table
+                    .select(objects_snapshot::checkpoint_sequence_number)
+                    .order(objects_snapshot::checkpoint_sequence_number.desc())
+                    .first::<i64>(conn)
+                    .optional()
+            })?
+            .unwrap_or_default();
+        Ok((
+            latest_object_snapshot_checkpoint_sequence,
+            latest_checkpoint_sequence,
+        ))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1625,18 +1761,18 @@ impl sui_types::storage::ObjectStore for IndexerReader {
     fn get_object(
         &self,
         object_id: &ObjectID,
-    ) -> Result<Option<sui_types::object::Object>, sui_types::error::SuiError> {
+    ) -> Result<Option<sui_types::object::Object>, sui_types::storage::error::Error> {
         self.get_object(object_id, None)
-            .map_err(|e| sui_types::error::SuiError::GenericStorageError(e.to_string()))
+            .map_err(sui_types::storage::error::Error::custom)
     }
 
     fn get_object_by_key(
         &self,
         object_id: &ObjectID,
         version: sui_types::base_types::VersionNumber,
-    ) -> Result<Option<sui_types::object::Object>, sui_types::error::SuiError> {
+    ) -> Result<Option<sui_types::object::Object>, sui_types::storage::error::Error> {
         self.get_object(object_id, Some(version))
-            .map_err(|e| sui_types::error::SuiError::GenericStorageError(e.to_string()))
+            .map_err(sui_types::storage::error::Error::custom)
     }
 }
 

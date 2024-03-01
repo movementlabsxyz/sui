@@ -14,6 +14,9 @@ on:
         required: true
         default: origin/main
 
+env:
+  SUI_COMMIT: "${{ github.event.inputs.sui_commit || 'origin/main' }}"
+
 jobs:
   simtest:
     timeout-minutes: 120
@@ -26,7 +29,7 @@ jobs:
 
     steps:
       - name: Install Teleport
-        uses: teleport-actions/setup@8d23169da0f80ce14d25ed791272faa1c07f4f1e # pin@v1
+        uses: teleport-actions/setup@176c25dfcd19cd31a252f275d579822b243e7b9c # pin@v1.0.6
         with:
           version: 11.3.1
       - name: Authorize against Teleport
@@ -44,19 +47,18 @@ jobs:
       # Cargo clean and git restore on any left over files from git checkout, and deletes all remote tracking branches
       - name: Environment clean
         run: | 
-          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && cargo clean && git restore ."
-          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && git branch -r | grep -v '[-]>' | xargs -L 1 git branch -rD || true"
+          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && rm -rf ~/sui"
+          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/ && git clone git@github.com:MystenLabs/sui.git"
  
       # Deleting files in tmpfs that usually fill up pretty quickly after each run
       - name: Tmpfs clean
         run: |  
-          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "sudo rm -rfd /tmp/*"
+          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 5 ssh ubuntu@simtest-01 "sudo rm -rf /tmp/*"
 
       # Checkout out the latest sui repo
       - name: Checkout sui repo
         run: |
-          SUI_COMMIT=${{ inputs.sui_commit }}
-          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 10 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && git fetch origin && git checkout $SUI_COMMIT"
+          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 10 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && git fetch origin && git rebase ${{ env.SUI_COMMIT  }}"
 
       # Setting up cargo and simtest
       - name: Install simtest
@@ -66,19 +68,19 @@ jobs:
       # Run simulator tests
       - name: Run simtest
         run: |
-          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 120 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && RUSTUP_MAX_RETRIES=10 CARGO_TERM_COLOR=always CARGO_INCREMENTAL=0 CARGO_NET_RETRY=10 RUST_BACKTRACE=short RUST_LOG=off USE_MOCK_CRYPTO=1 NUM_CPUS=24 ./scripts/simtest/simtest-run.sh"
+          tsh -i ${{ steps.auth.outputs.identity-file }} --ttl 120 ssh ubuntu@simtest-01 "source ~/.bashrc && source ~/.cargo/env && cd ~/sui && RUSTUP_MAX_RETRIES=10 CARGO_TERM_COLOR=always CARGO_INCREMENTAL=0 CARGO_NET_RETRY=10 RUST_BACKTRACE=short RUST_LOG=off NUM_CPUS=24 ./scripts/simtest/simtest-run.sh"
   
   notify:
     name: Notify
     needs: [simtest]
     runs-on: ubuntu-latest
-    if: always() # always notify
+    if: failure()
 
     steps:
-    - uses: technote-space/workflow-conclusion-action@v3
+    - uses: technote-space/workflow-conclusion-action@45ce8e0eb155657ab8ccf346ade734257fd196a5 # Pin v4.1.1
 
     - name: Checkout sui repo main branch
-      uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # pin@v3
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # Pin v4.1.1
     
     - name: Get sui commit
       env:
@@ -92,7 +94,26 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh_job_link=$(gh api -X GET 'repos/MystenLabs/sui/actions/runs/${{ github.run_id }}/jobs' --jq '.jobs.[0].html_url')
-        echo "gh_job_link=${gh_job_link}" >> $GITHUB_ENV        
+        echo "gh_job_link=${gh_job_link}" >> $GITHUB_ENV
+
+    - name: Get current sui-core oncall
+      id: pagerduty
+      uses: mxie/pagerduty-oncall-action@main 
+      with:
+        token: ${{ secrets.PAGERDUTY_ACCESS_KEY }}
+        schedule-id: PGCQ3YS # sui-core
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # pin v4.0.2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+
+    - name: Get slack id for the oncall
+      run: |
+        export slack_id=$(aws s3 cp s3://mysten-employees-dir/employees.json - | jq --arg ONCALL "${{ steps.pagerduty.outputs.person }}" '.[] | if .name == $ONCALL then .slack_id else empty end')
+        echo "slack_id=$(echo ${slack_id} | tr -d '"')" >> $GITHUB_ENV        
 
     - name: Post to slack
       uses: slackapi/slack-github-action@v1.24.0 # pin@v1.21.0
@@ -100,7 +121,6 @@ jobs:
         SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         SUI_SHA: ${{ env.sui_sha }}
         GH_JOB_LINK: ${{ env.gh_job_link }}
-      if: env.WORKFLOW_CONCLUSION == 'failure' # notify only if failure
       with:
         channel-id: 'simtest-nightly'
         payload: |
@@ -131,7 +151,7 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "To debug failures: `tsh ssh ubuntu@simtest-01` and look in the `/home/ubuntu/simtest_logs/{date}` folder for test results"
+                  "text": "<@${{ env.slack_id }}> (current sui-core oncall), please debug failures: `tsh ssh ubuntu@simtest-01` and look in the `/home/ubuntu/simtest_logs/{date}` folder for test results"
                 }
               }
             ]

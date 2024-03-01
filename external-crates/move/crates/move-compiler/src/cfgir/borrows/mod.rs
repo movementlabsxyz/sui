@@ -184,7 +184,7 @@ fn command(context: &mut Context, sp!(loc, cmd_): &Command) {
             context.borrow_state.abort()
         }
         C::Jump { .. } => (),
-        C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+        C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
     }
 }
 
@@ -277,7 +277,7 @@ fn exp(context: &mut Context, parent_e: &Exp) -> Values {
         }
 
         E::Unit { .. } => vec![],
-        E::Value(_) | E::Constant(_) | E::Spec(_, _) | E::UnresolvedError => svalue(),
+        E::Value(_) | E::Constant(_) | E::UnresolvedError => svalue(),
 
         E::Cast(e, _) | E::UnaryExp(_, e) => {
             let v = exp(context, e);

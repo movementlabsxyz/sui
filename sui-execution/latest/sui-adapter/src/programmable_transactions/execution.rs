@@ -32,7 +32,7 @@ mod checked {
     };
     use sui_move_natives::object_runtime::ObjectRuntime;
     use sui_protocol_config::ProtocolConfig;
-    use sui_types::storage::{get_package_objects, PackageObjectArc};
+    use sui_types::storage::{get_package_objects, PackageObject};
     use sui_types::{
         base_types::{
             MoveObjectType, ObjectID, SuiAddress, TxContext, TxContextKind, RESOLVED_ASCII_STR,
@@ -58,6 +58,7 @@ mod checked {
         execution_status::{CommandArgumentError, PackageUpgradeError},
     };
     use sui_verifier::{
+        default_verifier_config,
         private_generics::{EVENT_MODULE, PRIVATE_TRANSFER_FUNCTIONS, TRANSFER_MODULE},
         INIT_FN_NAME,
     };
@@ -92,6 +93,7 @@ mod checked {
                 let object_runtime: &ObjectRuntime = context.object_runtime();
                 // We still need to record the loaded child objects for replay
                 let loaded_runtime_objects = object_runtime.loaded_runtime_objects();
+                // we do not save the wrapped objects since on error, they should not be modified
                 drop(context);
                 state_view.save_loaded_runtime_objects(loaded_runtime_objects);
                 return Err(err.with_command_index(idx));
@@ -104,11 +106,15 @@ mod checked {
         // Record the objects loaded at runtime (dynamic fields + received) for
         // storage rebate calculation.
         let loaded_runtime_objects = object_runtime.loaded_runtime_objects();
+        // We record what objects were contained in at the start of the transaction
+        // for expensive invariant checks
+        let wrapped_object_containers = object_runtime.wrapped_object_containers();
 
         // apply changes
         let finished = context.finish::<Mode>();
         // Save loaded objects for debug. We dont want to lose the info
         state_view.save_loaded_runtime_objects(loaded_runtime_objects);
+        state_view.save_wrapped_object_containers(wrapped_object_containers);
         state_view.record_execution_results(finished?);
         Ok(mode_results)
     }
@@ -693,7 +699,7 @@ mod checked {
     fn fetch_package(
         context: &ExecutionContext<'_, '_, '_>,
         package_id: &ObjectID,
-    ) -> Result<PackageObjectArc, ExecutionError> {
+    ) -> Result<PackageObject, ExecutionError> {
         let mut fetched_packages = fetch_packages(context, vec![package_id])?;
         assert_invariant!(
             fetched_packages.len() == 1,
@@ -710,7 +716,7 @@ mod checked {
     fn fetch_packages<'ctx, 'vm, 'state, 'a>(
         context: &'ctx ExecutionContext<'vm, 'state, 'a>,
         package_ids: impl IntoIterator<Item = &'ctx ObjectID>,
-    ) -> Result<Vec<PackageObjectArc>, ExecutionError> {
+    ) -> Result<Vec<PackageObject>, ExecutionError> {
         let package_ids: BTreeSet<_> = package_ids.into_iter().collect();
         match get_package_objects(&context.state_view, package_ids) {
             Err(e) => Err(ExecutionError::new_with_source(
@@ -832,7 +838,11 @@ mod checked {
         for module in modules {
             // Run Sui bytecode verifier, which runs some additional checks that assume the Move
             // bytecode verifier has passed.
-            sui_verifier::verifier::sui_verify_module_unmetered(module, &BTreeMap::new())?;
+            sui_verifier::verifier::sui_verify_module_unmetered(
+                module,
+                &BTreeMap::new(),
+                &default_verifier_config(context.protocol_config, false),
+            )?;
         }
 
         Ok(())

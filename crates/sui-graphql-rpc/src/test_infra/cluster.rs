@@ -1,23 +1,25 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::client::simple_client::SimpleClient;
 use crate::config::ConnectionConfig;
 use crate::config::ServerConfig;
-use crate::server::simple_server::start_example_server;
-use mysten_metrics::init_metrics;
-use std::env;
+use crate::config::ServiceConfig;
+use crate::config::Version;
+use crate::server::graphiql_server::start_graphiql_server;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
+use sui_graphql_rpc_client::simple_client::SimpleClient;
 use sui_indexer::errors::IndexerError;
-use sui_indexer::indexer_v2::IndexerV2;
-use sui_indexer::metrics::IndexerMetrics;
-use sui_indexer::new_pg_connection_pool_impl;
-use sui_indexer::store::PgIndexerStoreV2;
-use sui_indexer::utils::reset_database;
-use sui_indexer::IndexerConfig;
-use sui_rest_api::node_state_getter::NodeStateGetter;
+pub use sui_indexer::processors::objects_snapshot_processor::SnapshotLagConfig;
+use sui_indexer::store::indexer_store::IndexerStore;
+use sui_indexer::store::PgIndexerStore;
+use sui_indexer::test_utils::force_delete_database;
+use sui_indexer::test_utils::start_test_indexer;
+use sui_indexer::test_utils::start_test_indexer_impl;
+use sui_indexer::test_utils::ReaderWriterConfig;
 use sui_swarm_config::genesis_config::{AccountConfig, DEFAULT_GAS_AMOUNT};
+use sui_types::storage::ReadStore;
 use test_cluster::TestCluster;
 use test_cluster::TestClusterBuilder;
 use tokio::task::JoinHandle;
@@ -28,22 +30,27 @@ const EPOCH_DURATION_MS: u64 = 15000;
 const ACCOUNT_NUM: usize = 20;
 const GAS_OBJECT_COUNT: usize = 3;
 
+pub const DEFAULT_INTERNAL_DATA_SOURCE_PORT: u16 = 3000;
+
 pub struct ExecutorCluster {
     pub executor_server_handle: JoinHandle<()>,
-    pub indexer_store: PgIndexerStoreV2,
+    pub indexer_store: PgIndexerStore,
     pub indexer_join_handle: JoinHandle<Result<(), IndexerError>>,
     pub graphql_server_join_handle: JoinHandle<()>,
     pub graphql_client: SimpleClient,
+    pub snapshot_config: SnapshotLagConfig,
+    pub graphql_connection_config: ConnectionConfig,
 }
 
 pub struct Cluster {
     pub validator_fullnode_handle: TestCluster,
-    pub indexer_store: PgIndexerStoreV2,
+    pub indexer_store: PgIndexerStore,
     pub indexer_join_handle: JoinHandle<Result<(), IndexerError>>,
     pub graphql_server_join_handle: JoinHandle<()>,
     pub graphql_client: SimpleClient,
 }
 
+/// Starts a validator, fullnode, indexer, and graphql service for testing.
 pub async fn start_cluster(
     graphql_connection_config: ConnectionConfig,
     internal_data_source_rpc_port: Option<u16>,
@@ -53,12 +60,17 @@ pub async fn start_cluster(
     let val_fn = start_validator_with_fullnode(internal_data_source_rpc_port).await;
 
     // Starts indexer
-    let (pg_store, pg_handle) =
-        start_test_indexer(Some(db_url), val_fn.rpc_url().to_string()).await;
+    let (pg_store, pg_handle) = start_test_indexer(
+        Some(db_url),
+        val_fn.rpc_url().to_string(),
+        ReaderWriterConfig::writer_mode(None),
+    )
+    .await;
 
     // Starts graphql server
-    let graphql_server_handle = start_graphql_server(graphql_connection_config.clone()).await;
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    let fn_rpc_url = val_fn.rpc_url().to_string();
+    let graphql_server_handle =
+        start_graphql_server_with_fn_rpc(graphql_connection_config.clone(), Some(fn_rpc_url)).await;
 
     let server_url = format!(
         "http://{}:{}/",
@@ -67,6 +79,7 @@ pub async fn start_cluster(
 
     // Starts graphql client
     let client = SimpleClient::new(server_url);
+    wait_for_graphql_server(&client).await;
 
     Cluster {
         validator_fullnode_handle: val_fn,
@@ -77,10 +90,13 @@ pub async fn start_cluster(
     }
 }
 
+/// Takes in a simulated instantiation of a Sui blockchain and builds a cluster around it. This
+/// cluster is typically used in e2e tests to emulate and test behaviors.
 pub async fn serve_executor(
     graphql_connection_config: ConnectionConfig,
     internal_data_source_rpc_port: u16,
-    executor: Arc<dyn NodeStateGetter>,
+    executor: Arc<dyn ReadStore + Send + Sync>,
+    snapshot_config: Option<SnapshotLagConfig>,
 ) -> ExecutorCluster {
     let db_url = graphql_connection_config.db_url.clone();
 
@@ -89,16 +105,28 @@ pub async fn serve_executor(
         .unwrap();
 
     let executor_server_handle = tokio::spawn(async move {
-        sui_rest_api::start_service(executor_server_url, executor, Some("/rest".to_owned())).await;
+        let chain_id = (*executor
+            .get_checkpoint_by_sequence_number(0)
+            .unwrap()
+            .unwrap()
+            .digest())
+        .into();
+
+        sui_rest_api::RestService::new_without_version(executor, chain_id)
+            .start_service(executor_server_url, Some("/rest".to_owned()))
+            .await;
     });
 
-    // Starts indexer
-    let (pg_store, pg_handle) =
-        start_test_indexer(Some(db_url), format!("http://{}", executor_server_url)).await;
+    let (pg_store, pg_handle) = start_test_indexer_impl(
+        Some(db_url),
+        format!("http://{}", executor_server_url),
+        ReaderWriterConfig::writer_mode(snapshot_config.clone()),
+        Some(graphql_connection_config.db_name()),
+    )
+    .await;
 
     // Starts graphql server
     let graphql_server_handle = start_graphql_server(graphql_connection_config.clone()).await;
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
     let server_url = format!(
         "http://{}:{}/",
@@ -107,6 +135,7 @@ pub async fn serve_executor(
 
     // Starts graphql client
     let client = SimpleClient::new(server_url);
+    wait_for_graphql_server(&client).await;
 
     ExecutorCluster {
         executor_server_handle,
@@ -114,18 +143,33 @@ pub async fn serve_executor(
         indexer_join_handle: pg_handle,
         graphql_server_join_handle: graphql_server_handle,
         graphql_client: client,
+        snapshot_config: snapshot_config.unwrap_or_default(),
+        graphql_connection_config,
     }
 }
 
-async fn start_graphql_server(graphql_connection_config: ConnectionConfig) -> JoinHandle<()> {
-    let server_config = ServerConfig {
+pub async fn start_graphql_server(graphql_connection_config: ConnectionConfig) -> JoinHandle<()> {
+    start_graphql_server_with_fn_rpc(graphql_connection_config, None).await
+}
+
+pub async fn start_graphql_server_with_fn_rpc(
+    graphql_connection_config: ConnectionConfig,
+    fn_rpc_url: Option<String>,
+) -> JoinHandle<()> {
+    let mut server_config = ServerConfig {
         connection: graphql_connection_config,
+        service: ServiceConfig::default(),
         ..ServerConfig::default()
+    };
+    if let Some(fn_rpc_url) = fn_rpc_url {
+        server_config.tx_exec_full_node.node_rpc_url = Some(fn_rpc_url);
     };
 
     // Starts graphql server
     tokio::spawn(async move {
-        start_example_server(&server_config).await.unwrap();
+        start_graphiql_server(&server_config, &Version("test"))
+            .await
+            .unwrap();
     })
 }
 
@@ -148,141 +192,120 @@ async fn start_validator_with_fullnode(internal_data_source_rpc_port: Option<u16
     test_cluster_builder.build().await
 }
 
-pub async fn start_test_indexer(
-    db_url: Option<String>,
-    rpc_url: String,
-) -> (PgIndexerStoreV2, JoinHandle<Result<(), IndexerError>>) {
-    let db_url = db_url.unwrap_or_else(|| {
-        let pg_host = env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".into());
-        let pg_port = env::var("POSTGRES_PORT").unwrap_or_else(|_| "32770".into());
-        let pw = env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "postgrespw".into());
-        format!("postgres://postgres:{pw}@{pg_host}:{pg_port}")
-    });
-
-    let config = IndexerConfig {
-        db_url: Some(db_url.clone()),
-        rpc_client_url: rpc_url,
-        migrated_methods: IndexerConfig::all_implemented_methods(),
-        reset_db: true,
-        fullnode_sync_worker: true,
-        rpc_server_worker: false,
-        use_v2: true,
-        ..Default::default()
-    };
-
-    let parsed_url = config.get_db_url().unwrap();
-    let blocking_pool = new_pg_connection_pool_impl(&parsed_url, Some(5)).unwrap();
-    if config.reset_db {
-        reset_database(&mut blocking_pool.get().unwrap(), true, config.use_v2).unwrap();
-    }
-
-    let registry = prometheus::Registry::default();
-
-    init_metrics(&registry);
-
-    let indexer_metrics = IndexerMetrics::new(&registry);
-
-    let store = PgIndexerStoreV2::new(blocking_pool, indexer_metrics.clone());
-    let store_clone = store.clone();
-    let handle = tokio::spawn(async move {
-        IndexerV2::start_writer(&config, store_clone, indexer_metrics).await
-    });
-    (store, handle)
+/// Repeatedly ping the GraphQL server for 10s, until it responds
+async fn wait_for_graphql_server(client: &SimpleClient) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while client.ping().await.is_err() {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .expect("Timeout waiting for graphql server to start");
 }
 
-pub async fn simulator_commands_test_impl() {
-    let test_file_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("test_infra")
-        .join("data")
-        .join("example.move");
+async fn wait_for_indexer_checkpoint_catchup(
+    indexer_store: &PgIndexerStore,
+    checkpoint: u64,
+    base_timeout: Duration,
+) {
+    let current_checkpoint = indexer_store
+        .get_latest_tx_checkpoint_sequence_number()
+        .await
+        .unwrap();
 
-    let output_file_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("test_infra")
-        .join("data")
-        .join("example.exp");
+    let diff = checkpoint
+        .saturating_sub(current_checkpoint.unwrap_or(0))
+        .max(1);
+    let timeout = base_timeout.mul_f64(diff as f64);
 
-    // Read the file into a string
-    let file_contents = std::fs::read_to_string(&test_file_path).unwrap();
-
-    let (output, adapter) = move_transactional_test_runner::framework::handle_actual_output::<
-        sui_transactional_test_runner::test_adapter::SuiTestAdapter,
-    >(
-        &test_file_path,
-        Some(&*sui_transactional_test_runner::test_adapter::PRE_COMPILED),
-    )
+    tokio::time::timeout(timeout, async {
+        while indexer_store
+            .get_latest_tx_checkpoint_sequence_number()
+            .await
+            .unwrap()
+            < Some(checkpoint)
+        {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
     .await
-    .unwrap();
+    .expect("Timeout waiting for indexer to catchup to checkpoint");
+}
 
-    // Read the file into a string
-    let output_file_contents = match std::fs::read_to_string(&output_file_path) {
-        Ok(contents) => contents,
-        Err(_) => {
-            // If the file doesn't exist, create it
-            std::fs::write(&output_file_path, output.clone()).unwrap();
-            output.clone()
-        }
-    };
+impl Cluster {
+    pub async fn wait_for_checkpoint_catchup(&self, checkpoint: u64, base_timeout: Duration) {
+        wait_for_indexer_checkpoint_catchup(&self.indexer_store, checkpoint, base_timeout).await
+    }
+}
 
-    // Check that the output matches the expected output
-    assert_eq!(output_file_contents, output);
+impl ExecutorCluster {
+    pub async fn wait_for_checkpoint_catchup(&self, checkpoint: u64, base_timeout: Duration) {
+        wait_for_indexer_checkpoint_catchup(&self.indexer_store, checkpoint, base_timeout).await
+    }
 
-    let checkpoint = adapter.get_latest_checkpoint_sequence_number().unwrap();
-    let checkpoint_info = adapter
-        .get_verified_checkpoint_by_sequence_number(checkpoint)
-        .unwrap();
+    /// The ObjectsSnapshotProcessor is a long-running task that periodically takes a snapshot of
+    /// the objects table. This leads to flakiness in tests, so we wait until the objects_snapshot
+    /// has reached the expected state.
+    pub async fn wait_for_objects_snapshot_catchup(&self, base_timeout: Duration) {
+        let mut latest_snapshot_cp = 0;
 
-    let num_actual_checkpoint_commands = file_contents.match_indices("create-checkpoint").count();
-    let num_actual_epoch_commands = file_contents.match_indices("advance-epoch").count();
+        let latest_cp = self
+            .indexer_store
+            .get_latest_tx_checkpoint_sequence_number()
+            .await
+            .unwrap()
+            .unwrap();
 
-    // Each epoch creation also creates a checkpoint
-    assert_eq!(
-        checkpoint as usize,
-        num_actual_checkpoint_commands + num_actual_epoch_commands
-    );
+        tokio::time::timeout(base_timeout, async {
+            while latest_cp > latest_snapshot_cp + self.snapshot_config.snapshot_max_lag as u64 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                latest_snapshot_cp = self
+                    .indexer_store
+                    .get_latest_object_snapshot_checkpoint_sequence_number()
+                    .await
+                    .unwrap()
+                    .unwrap_or_default();
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Timeout waiting for indexer to update objects snapshot - latest_cp: {}, latest_snapshot_cp: {}",
+        latest_cp, latest_snapshot_cp));
+    }
 
-    // Since we start at epoch 0, we need to subtract 1
-    assert_eq!(
-        checkpoint_info.epoch() as usize,
-        num_actual_epoch_commands - 1
-    );
+    pub async fn cleanup_resources(self) {
+        // Delete the database
+        let db_url = self.graphql_connection_config.db_url.clone();
+        force_delete_database(db_url).await;
+    }
 
-    // Serve the data, start an indexer, and graphql server
-    let cluster = serve_executor(
-        ConnectionConfig::ci_integration_test_cfg(),
-        3000,
-        Arc::new(adapter),
-    )
-    .await;
+    pub async fn force_objects_snapshot_catchup(&self, start_cp: u64, end_cp: u64) {
+        self.indexer_store
+            .persist_object_snapshot(start_cp, end_cp)
+            .await
+            .unwrap();
 
-    let query = r#"{
-      checkpointConnection (last: 1) {
-        nodes {
-          sequenceNumber
-        }
-      }
-    }"#
-    .to_string();
+        let mut latest_snapshot_cp = self
+            .indexer_store
+            .get_latest_object_snapshot_checkpoint_sequence_number()
+            .await
+            .unwrap()
+            .unwrap_or_default();
 
-    // Get the latest checkpoint via graphql
-    let resp = cluster.graphql_client.execute(query, vec![]).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while latest_snapshot_cp < end_cp - 1 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                latest_snapshot_cp = self
+                    .indexer_store
+                    .get_latest_object_snapshot_checkpoint_sequence_number()
+                    .await
+                    .unwrap()
+                    .unwrap_or_default();
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Timeout waiting for indexer to update objects snapshot - latest_snapshot_cp: {}, end_cp: {}",
+        latest_snapshot_cp, end_cp));
 
-    // Result should be something like {"data":{"checkpointConnection":{"nodes":[{"sequenceNumber":XYZ}]}}}
-    // Where XYZ is the seq number of the latest checkpoint
-    let fetched_chk = resp
-        .get("data")
-        .unwrap()
-        .get("checkpointConnection")
-        .unwrap()
-        .get("nodes")
-        .unwrap()
-        .as_array()
-        .unwrap()[0]
-        .get("sequenceNumber")
-        .unwrap()
-        .as_i64()
-        .unwrap();
-
-    assert_eq!(fetched_chk as u64, checkpoint);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }

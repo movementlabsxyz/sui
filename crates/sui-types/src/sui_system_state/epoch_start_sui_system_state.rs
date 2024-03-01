@@ -5,10 +5,11 @@ use enum_dispatch::enum_dispatch;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::base_types::{AuthorityName, EpochId, SuiAddress};
-use crate::committee::{Committee, StakeUnit};
+use crate::committee::{Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit};
 use crate::multiaddr::Multiaddr;
 use anemo::types::{PeerAffinity, PeerInfo};
 use anemo::PeerId;
+use consensus_config::{Authority, Committee as ConsensusCommittee};
 use narwhal_config::{Committee as NarwhalCommittee, CommitteeBuilder, WorkerCache, WorkerIndex};
 use serde::{Deserialize, Serialize};
 use sui_protocol_config::ProtocolVersion;
@@ -22,8 +23,11 @@ pub trait EpochStartSystemStateTrait {
     fn safe_mode(&self) -> bool;
     fn epoch_start_timestamp_ms(&self) -> u64;
     fn epoch_duration_ms(&self) -> u64;
+    fn get_validator_addresses(&self) -> Vec<SuiAddress>;
     fn get_sui_committee(&self) -> Committee;
+    fn get_sui_committee_with_network_metadata(&self) -> CommitteeWithNetworkMetadata;
     fn get_narwhal_committee(&self) -> NarwhalCommittee;
+    fn get_mysticeti_committee(&self) -> ConsensusCommittee;
     fn get_validator_as_p2p_peers(&self, excluding_self: AuthorityName) -> Vec<PeerInfo>;
     fn get_authority_names_to_peer_ids(&self) -> HashMap<AuthorityName, PeerId>;
     fn get_authority_names_to_hostnames(&self) -> HashMap<AuthorityName, String>;
@@ -123,6 +127,37 @@ impl EpochStartSystemStateTrait for EpochStartSystemStateV1 {
         self.epoch_duration_ms
     }
 
+    fn get_validator_addresses(&self) -> Vec<SuiAddress> {
+        self.active_validators
+            .iter()
+            .map(|validator| validator.sui_address)
+            .collect()
+    }
+
+    fn get_sui_committee_with_network_metadata(&self) -> CommitteeWithNetworkMetadata {
+        let (voting_rights, network_metadata) = self
+            .active_validators
+            .iter()
+            .map(|validator| {
+                (
+                    (validator.authority_name(), validator.voting_power),
+                    (
+                        validator.authority_name(),
+                        NetworkMetadata {
+                            network_address: validator.sui_net_address.clone(),
+                            narwhal_primary_address: validator.narwhal_primary_address.clone(),
+                        },
+                    ),
+                )
+            })
+            .unzip();
+
+        CommitteeWithNetworkMetadata {
+            committee: Committee::new(self.epoch, voting_rights),
+            network_metadata,
+        }
+    }
+
     fn get_sui_committee(&self) -> Committee {
         let voting_rights = self
             .active_validators
@@ -147,6 +182,23 @@ impl EpochStartSystemStateTrait for EpochStartSystemStateV1 {
         }
 
         committee_builder.build()
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn get_mysticeti_committee(&self) -> ConsensusCommittee {
+        let mut authorities = vec![];
+        for validator in self.active_validators.iter() {
+            authorities.push(Authority {
+                stake: validator.voting_power as consensus_config::Stake,
+                // TODO(mysticeti): Add EpochStartValidatorInfoV2 with new field for mysticeti address.
+                address: validator.narwhal_primary_address.clone(),
+                hostname: validator.hostname.clone(),
+                network_key: validator.narwhal_network_pubkey.clone(),
+                protocol_key: validator.protocol_pubkey.clone(),
+            });
+        }
+
+        ConsensusCommittee::new(self.epoch as consensus_config::Epoch, authorities)
     }
 
     fn get_validator_as_p2p_peers(&self, excluding_self: AuthorityName) -> Vec<PeerInfo> {

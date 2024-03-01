@@ -1,22 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::str::FromStr;
-
 use crate::context_data::package_cache::PackageCache;
 use async_graphql::*;
+use move_binary_format::file_format::AbilitySet;
 use move_core_types::{annotated_value as A, language_storage::TypeTag};
 use serde::{Deserialize, Serialize};
 use sui_package_resolver::Resolver;
 
 use crate::error::Error;
 
-/// Represents concrete types (no type parameters, no references)
-#[derive(SimpleObject, Clone, Debug, PartialEq, Eq)]
-#[graphql(complex)]
+use super::open_move_type::MoveAbility;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MoveType {
-    /// Flat representation of the type signature, as a displayable string.
-    repr: String,
+    pub native: TypeTag,
 }
 
 scalar!(
@@ -31,7 +29,7 @@ type MoveTypeSignature =
   | \"u8\" | \"u16\" | ... | \"u256\"
   | { vector: MoveTypeSignature }
   | {
-      struct: {
+      datatype: {
         package: string,
         module: string,
         type: string,
@@ -51,7 +49,12 @@ type MoveTypeLayout =
   | \"bool\"
   | \"u8\" | \"u16\" | ... | \"u256\"
   | { vector: MoveTypeLayout }
-  | { struct: [{ name: string, layout: MoveTypeLayout }] }"
+  | {
+      struct: {
+        type: string,
+        fields: [{ name: string, layout: MoveTypeLayout }],
+      }
+    }"
 );
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -66,11 +69,12 @@ pub(crate) enum MoveTypeSignature {
     U128,
     U256,
     Vector(Box<MoveTypeSignature>),
-    Struct {
+    Datatype {
         package: String,
         module: String,
         #[serde(rename = "type")]
         type_: String,
+        #[serde(rename = "typeParameters")]
         type_parameters: Vec<MoveTypeSignature>,
     },
 }
@@ -87,7 +91,14 @@ pub(crate) enum MoveTypeLayout {
     U128,
     U256,
     Vector(Box<MoveTypeLayout>),
-    Struct(Vec<MoveFieldLayout>),
+    Struct(MoveStructLayout),
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct MoveStructLayout {
+    #[serde(rename = "type")]
+    type_: String,
+    fields: Vec<MoveFieldLayout>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,8 +107,14 @@ pub(crate) struct MoveFieldLayout {
     layout: MoveTypeLayout,
 }
 
-#[ComplexObject]
+/// Represents concrete types (no type parameters, no references).
+#[Object]
 impl MoveType {
+    /// Flat representation of the type signature, as a displayable string.
+    async fn repr(&self) -> String {
+        self.native.to_canonical_string(/* with_prefix */ true)
+    }
+
     /// Structured representation of the type signature.
     async fn signature(&self) -> Result<MoveTypeSignature> {
         // Factor out into its own non-GraphQL, non-async function for better testability
@@ -113,15 +130,31 @@ impl MoveType {
 
         MoveTypeLayout::try_from(self.layout_impl(resolver).await.extend()?).extend()
     }
+
+    /// The abilities this concrete type has.
+    async fn abilities(&self, ctx: &Context<'_>) -> Result<Vec<MoveAbility>> {
+        let resolver: &Resolver<PackageCache> = ctx
+            .data()
+            .map_err(|_| Error::Internal("Unable to fetch Package Cache.".to_string()))
+            .extend()?;
+
+        Ok(self
+            .abilities_impl(resolver)
+            .await
+            .extend()?
+            .into_iter()
+            .map(MoveAbility::from)
+            .collect())
+    }
 }
 
 impl MoveType {
-    pub(crate) fn new(repr: String) -> MoveType {
-        Self { repr }
+    pub(crate) fn new(native: TypeTag) -> MoveType {
+        Self { native }
     }
 
     fn signature_impl(&self) -> Result<MoveTypeSignature, Error> {
-        MoveTypeSignature::try_from(self.native_type_tag()?)
+        MoveTypeSignature::try_from(self.native.clone())
     }
 
     pub(crate) async fn layout_impl(
@@ -129,16 +162,26 @@ impl MoveType {
         resolver: &Resolver<PackageCache>,
     ) -> Result<A::MoveTypeLayout, Error> {
         resolver
-            .type_layout(self.native_type_tag()?)
+            .type_layout(self.native.clone())
             .await
             .map_err(|e| {
-                Error::Internal(format!("Error calculating layout for {}: {e}", self.repr))
+                Error::Internal(format!(
+                    "Error calculating layout for {}: {e}",
+                    self.native.to_canonical_display(/* with_prefix */ true),
+                ))
             })
     }
 
-    fn native_type_tag(&self) -> Result<TypeTag, Error> {
-        TypeTag::from_str(&self.repr)
-            .map_err(|e| Error::Internal(format!("Error parsing type '{}': {e}", self.repr)))
+    pub(crate) async fn abilities_impl(
+        &self,
+        resolver: &Resolver<PackageCache>,
+    ) -> Result<AbilitySet, Error> {
+        resolver.abilities(self.native.clone()).await.map_err(|e| {
+            Error::Internal(format!(
+                "Error calculating abilities for {}: {e}",
+                self.native.to_canonical_string(/* with_prefix */ true),
+            ))
+        })
     }
 }
 
@@ -163,7 +206,7 @@ impl TryFrom<TypeTag> for MoveTypeSignature {
 
             T::Vector(v) => Self::Vector(Box::new(Self::try_from(*v)?)),
 
-            T::Struct(s) => Self::Struct {
+            T::Struct(s) => Self::Datatype {
                 package: s.address.to_canonical_string(/* with_prefix */ true),
                 module: s.module.to_string(),
                 type_: s.name.to_string(),
@@ -181,7 +224,6 @@ impl TryFrom<A::MoveTypeLayout> for MoveTypeLayout {
     type Error = Error;
 
     fn try_from(layout: A::MoveTypeLayout) -> Result<Self, Error> {
-        use A::MoveStructLayout as SL;
         use A::MoveTypeLayout as TL;
 
         Ok(match layout {
@@ -198,13 +240,22 @@ impl TryFrom<A::MoveTypeLayout> for MoveTypeLayout {
             TL::Address => Self::Address,
 
             TL::Vector(v) => Self::Vector(Box::new(Self::try_from(*v)?)),
+            TL::Struct(s) => Self::Struct(s.try_into()?),
+        })
+    }
+}
 
-            TL::Struct(SL { fields, .. }) => Self::Struct(
-                fields
-                    .into_iter()
-                    .map(MoveFieldLayout::try_from)
-                    .collect::<Result<_, _>>()?,
-            ),
+impl TryFrom<A::MoveStructLayout> for MoveStructLayout {
+    type Error = Error;
+
+    fn try_from(layout: A::MoveStructLayout) -> Result<Self, Error> {
+        Ok(Self {
+            type_: layout.type_.to_canonical_string(/* with_prefix */ true),
+            fields: layout
+                .fields
+                .into_iter()
+                .map(MoveFieldLayout::try_from)
+                .collect::<Result<_, _>>()?,
         })
     }
 }
@@ -227,12 +278,15 @@ pub(crate) fn unexpected_signer_error() -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     use expect_test::expect;
 
     fn signature(repr: impl Into<String>) -> Result<MoveTypeSignature, Error> {
-        MoveType::new(repr.into()).signature_impl()
+        let tag = TypeTag::from_str(repr.into().as_str()).unwrap();
+        MoveType::new(tag).signature_impl()
     }
 
     #[test]
@@ -240,7 +294,7 @@ mod tests {
         let sig = signature("vector<0x42::foo::Bar<address, u32, bool, u256>>").unwrap();
         let expect = expect![[r#"
             Vector(
-                Struct {
+                Datatype {
                     package: "0x0000000000000000000000000000000000000000000000000000000000000042",
                     module: "foo",
                     type_: "Bar",
@@ -253,15 +307,6 @@ mod tests {
                 },
             )"#]];
         expect.assert_eq(&format!("{sig:#?}"));
-    }
-
-    #[test]
-    fn tag_parse_error() {
-        let err = signature("not_a_type").unwrap_err();
-        let expect = expect![[
-            r#"Internal("Error parsing type 'not_a_type': unexpected token Name(\"not_a_type\"), expected type tag")"#
-        ]];
-        expect.assert_eq(&format!("{err:?}"));
     }
 
     #[test]

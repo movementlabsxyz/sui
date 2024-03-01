@@ -5,7 +5,6 @@ use crate::command::Component;
 use crate::mock_consensus::{ConsensusMode, MockConsensusClient};
 use crate::mock_storage::InMemoryObjectStore;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use sui_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use sui_core::authority::authority_store_tables::LiveObject;
@@ -16,8 +15,9 @@ use sui_core::checkpoints::checkpoint_executor::CheckpointExecutor;
 use sui_core::consensus_adapter::{
     ConnectionMonitorStatusForTests, ConsensusAdapter, ConsensusAdapterMetrics,
 };
+use sui_core::state_accumulator::AccumulatorStore;
 use sui_core::state_accumulator::StateAccumulator;
-use sui_test_transaction_builder::TestTransactionBuilder;
+use sui_test_transaction_builder::{PublishData, TestTransactionBuilder};
 use sui_types::base_types::{AuthorityName, ObjectRef, SuiAddress, TransactionDigest};
 use sui_types::committee::Committee;
 use sui_types::crypto::{AccountKeyPair, AuthoritySignature, Signer};
@@ -94,14 +94,14 @@ impl SingleValidator {
     /// Publish a package, returns the package object and the updated gas object.
     pub async fn publish_package(
         &self,
-        path: PathBuf,
+        publish_data: PublishData,
         sender: SuiAddress,
         keypair: &AccountKeyPair,
         gas: ObjectRef,
     ) -> (ObjectRef, ObjectRef) {
-        let transaction = TestTransactionBuilder::new(sender, gas, DEFAULT_VALIDATOR_GAS_PRICE)
-            .publish(path)
-            .build_and_sign(keypair);
+        let tx_builder = TestTransactionBuilder::new(sender, gas, DEFAULT_VALIDATOR_GAS_PRICE)
+            .publish_with_data(publish_data);
+        let transaction = tx_builder.build_and_sign(keypair);
         let effects = self.execute_raw_transaction(transaction).await;
         let package = effects
             .all_changed_objects()
@@ -157,7 +157,9 @@ impl SingleValidator {
                 let response = self
                     .validator_service
                     .execute_certificate_for_testing(cert)
-                    .await;
+                    .await
+                    .unwrap()
+                    .into_inner();
                 response.signed_effects.into_data()
             }
             Component::TxnSigning | Component::CheckpointExecutor | Component::ExecutionOnly => {
@@ -202,7 +204,7 @@ impl SingleValidator {
         )
         .unwrap();
         let (kind, signer, gas) = executable.transaction_data().execution_parts();
-        let (_, effects, _) = self.epoch_store.executor().execute_transaction_to_effects(
+        let (_, _, effects, _) = self.epoch_store.executor().execute_transaction_to_effects(
             &store,
             self.epoch_store.protocol_config(),
             self.get_validator().metrics.limits_metrics.clone(),
@@ -225,6 +227,8 @@ impl SingleValidator {
         self.validator_service
             .handle_transaction_for_testing(transaction)
             .await
+            .unwrap()
+            .into_inner()
     }
 
     pub(crate) async fn build_checkpoints(
@@ -286,9 +290,8 @@ impl SingleValidator {
         let checkpoint_executor = CheckpointExecutor::new_for_tests(
             ckpt_receiver,
             validator.get_checkpoint_store().clone(),
-            validator.db(),
-            validator.transaction_manager().clone(),
-            Arc::new(StateAccumulator::new(validator.db())),
+            validator.clone(),
+            Arc::new(StateAccumulator::new(validator.get_execution_cache())),
         );
         (checkpoint_executor, ckpt_sender)
     }
@@ -296,7 +299,7 @@ impl SingleValidator {
     pub(crate) fn create_in_memory_store(&self) -> InMemoryObjectStore {
         let objects: HashMap<_, _> = self
             .get_validator()
-            .database
+            .get_execution_cache()
             .iter_live_object_set(false)
             .map(|o| match o {
                 LiveObject::Normal(object) => (object.id(), object),

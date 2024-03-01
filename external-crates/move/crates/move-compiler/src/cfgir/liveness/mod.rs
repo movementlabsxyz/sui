@@ -96,7 +96,7 @@ fn command(state: &mut LivenessState, sp!(_, cmd_): &Command) {
         | C::JumpIf { cond: e, .. } => exp(state, e),
 
         C::Jump { .. } => (),
-        C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+        C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
     }
 }
 
@@ -123,10 +123,6 @@ fn exp(state: &mut LivenessState, parent_e: &Exp) {
         E::BorrowLocal(_, var) | E::Copy { var, .. } | E::Move { var, .. } => {
             state.0.insert(*var);
         }
-
-        E::Spec(_, used_locals) => used_locals.keys().for_each(|v| {
-            state.0.insert(*v);
-        }),
 
         E::ModuleCall(mcall) => mcall.arguments.iter().for_each(|e| exp(state, e)),
         E::Vector(_, _, _, args) => args.iter().for_each(|e| exp(state, e)),
@@ -275,7 +271,7 @@ mod last_usage {
             | C::JumpIf { cond: e, .. } => exp(context, e),
 
             C::Jump { .. } => (),
-            C::Break | C::Continue => panic!("ICE break/continue not translated to jumps"),
+            C::Break(_) | C::Continue(_) => panic!("ICE break/continue not translated to jumps"),
         }
     }
 
@@ -323,13 +319,6 @@ mod last_usage {
             E::BorrowLocal(_, var) | E::Move { var, .. } => {
                 // remove it from context to prevent accidental dropping in previous usages
                 context.dropped_live.remove(var);
-            }
-
-            E::Spec(_, used_locals) => {
-                // remove it from context to prevent accidental dropping in previous usages
-                used_locals.keys().for_each(|var| {
-                    context.dropped_live.remove(var);
-                })
             }
 
             E::Copy { var, from_user } => {
@@ -454,7 +443,7 @@ fn release_dead_refs_block(
         return;
     }
 
-    let cmd_loc = block.get(0).unwrap().loc;
+    let cmd_loc = block.front().unwrap().loc;
     let cur_state = {
         let mut s = liveness_pre_state.clone();
         for cmd in block.iter().rev() {

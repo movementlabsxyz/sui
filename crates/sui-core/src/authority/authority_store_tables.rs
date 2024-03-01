@@ -136,14 +136,20 @@ impl AuthorityPerpetualTables {
     pub fn open(parent_path: &Path, db_options: Option<Options>) -> Self {
         Self::open_tables_read_write(
             Self::path(parent_path),
-            MetricConf::with_sampling(SamplingInterval::new(Duration::from_secs(60), 0)),
+            MetricConf::new("perpetual")
+                .with_sampling(SamplingInterval::new(Duration::from_secs(60), 0)),
             db_options,
             None,
         )
     }
 
     pub fn open_readonly(parent_path: &Path) -> AuthorityPerpetualTablesReadOnly {
-        Self::get_read_only_handle(Self::path(parent_path), None, None, MetricConf::default())
+        Self::get_read_only_handle(
+            Self::path(parent_path),
+            None,
+            None,
+            MetricConf::new("perpetual_readonly"),
+        )
     }
 
     // This is used by indexer to find the correct version of dynamic field child object.
@@ -153,17 +159,16 @@ impl AuthorityPerpetualTables {
         &self,
         object_id: ObjectID,
         version: SequenceNumber,
-    ) -> Option<Object> {
-        let Ok(iter) = self
+    ) -> SuiResult<Option<Object>> {
+        let iter = self
             .objects
-            .range_iter(ObjectKey::min_for_id(&object_id)..=ObjectKey::max_for_id(&object_id))
-            .skip_prior_to(&ObjectKey(object_id, version))
-        else {
-            return None;
-        };
-        iter.reverse()
-            .next()
-            .and_then(|(key, o)| self.object(&key, o).ok().flatten())
+            .safe_range_iter(ObjectKey::min_for_id(&object_id)..=ObjectKey::max_for_id(&object_id))
+            .skip_prior_to(&ObjectKey(object_id, version))?;
+        match iter.reverse().next() {
+            Some(Ok((key, o))) => self.object(&key, o),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
     }
 
     fn construct_object(
@@ -281,7 +286,7 @@ impl AuthorityPerpetualTables {
             .epoch())
     }
 
-    pub async fn set_epoch_start_configuration(
+    pub fn set_epoch_start_configuration(
         &self,
         epoch_start_configuration: &EpochStartConfiguration,
     ) -> SuiResult {
@@ -338,72 +343,26 @@ impl AuthorityPerpetualTables {
         object: &(ObjectID, SequenceNumber),
     ) -> SuiResult<Vec<ObjectKey>> {
         let mut objects = vec![];
-        for (key, _value) in self.objects.iter_with_bounds(
+        for result in self.objects.safe_iter_with_bounds(
             Some(ObjectKey(object.0, object.1.next())),
             Some(ObjectKey(object.0, VersionNumber::MAX)),
         ) {
+            let (key, _) = result?;
             objects.push(key);
         }
         Ok(objects)
     }
 
-    /// Removes executed effects and outputs for a transaction,
-    /// and tries to ensure the transaction is replayable.
-    ///
-    /// WARNING: This method is very subtle and can corrupt the database if used incorrectly.
-    /// It should only be used in one-off cases or tests after fully understanding the risk.
-    pub fn remove_executed_effects_and_outputs_subtle(
-        &self,
-        digest: &TransactionDigest,
-        objects: &[ObjectKey],
-    ) -> SuiResult {
-        let mut wb = self.objects.batch();
-        for object in objects {
-            wb.delete_batch(&self.objects, [object])?;
-            if self.has_object_lock(object) {
-                self.remove_object_lock_batch(&mut wb, object)?;
-            }
-        }
-        wb.delete_batch(&self.executed_transactions_to_checkpoint, [digest])?;
-        wb.delete_batch(&self.executed_effects, [digest])?;
-        wb.write()?;
-        Ok(())
-    }
-
-    pub fn has_object_lock(&self, object: &ObjectKey) -> bool {
-        self.owned_object_transaction_locks
-            .iter_with_bounds(
+    pub fn has_object_lock(&self, object: &ObjectKey) -> SuiResult<bool> {
+        Ok(self
+            .owned_object_transaction_locks
+            .safe_iter_with_bounds(
                 Some((object.0, object.1, ObjectDigest::MIN)),
                 Some((object.0, object.1, ObjectDigest::MAX)),
             )
             .next()
-            .is_some()
-    }
-
-    /// Removes owned object locks and set the lock to the previous version of the object.
-    ///
-    /// WARNING: This method is very subtle and can corrupt the database if used incorrectly.
-    /// It should only be used in one-off cases or tests after fully understanding the risk.
-    pub fn remove_object_lock_subtle(&self, object: &ObjectKey) -> SuiResult<ObjectRef> {
-        let mut wb = self.objects.batch();
-        let object_ref = self.remove_object_lock_batch(&mut wb, object)?;
-        wb.write()?;
-        Ok(object_ref)
-    }
-
-    fn remove_object_lock_batch(
-        &self,
-        wb: &mut DBBatch,
-        object: &ObjectKey,
-    ) -> SuiResult<ObjectRef> {
-        wb.schedule_delete_range(
-            &self.owned_object_transaction_locks,
-            &(object.0, object.1, ObjectDigest::MIN),
-            &(object.0, object.1, ObjectDigest::MAX),
-        )?;
-        let object_ref = self.get_latest_object_ref_or_tombstone(object.0)?.unwrap();
-        wb.insert_batch(&self.owned_object_transaction_locks, [(object_ref, None)])?;
-        Ok(object_ref)
+            .transpose()?
+            .is_some())
     }
 
     pub fn set_highest_pruned_checkpoint_without_wb(
@@ -436,9 +395,7 @@ impl AuthorityPerpetualTables {
 
     pub fn checkpoint_db(&self, path: &Path) -> SuiResult {
         // This checkpoints the entire db and not just objects table
-        self.objects
-            .checkpoint_db(path)
-            .map_err(SuiError::StorageError)
+        self.objects.checkpoint_db(path).map_err(Into::into)
     }
 
     pub fn reset_db_for_execution_since_genesis(&self) -> SuiResult {
@@ -455,10 +412,7 @@ impl AuthorityPerpetualTables {
         self.expected_network_sui_amount.unsafe_clear()?;
         self.expected_storage_fund_imbalance.unsafe_clear()?;
         self.object_per_epoch_marker_table.unsafe_clear()?;
-        self.objects
-            .rocksdb
-            .flush()
-            .map_err(SuiError::StorageError)?;
+        self.objects.rocksdb.flush()?;
         Ok(())
     }
 
@@ -495,17 +449,21 @@ impl AuthorityPerpetualTables {
 
 impl ObjectStore for AuthorityPerpetualTables {
     /// Read an object and return it, or Ok(None) if the object was not found.
-    fn get_object(&self, object_id: &ObjectID) -> Result<Option<Object>, SuiError> {
+    fn get_object(
+        &self,
+        object_id: &ObjectID,
+    ) -> Result<Option<Object>, sui_types::storage::error::Error> {
         let obj_entry = self
             .objects
             .unbounded_iter()
-            .skip_prior_to(&ObjectKey::max_for_id(object_id))?
+            .skip_prior_to(&ObjectKey::max_for_id(object_id))
+            .map_err(sui_types::storage::error::Error::custom)?
             .next();
 
         match obj_entry {
-            Some((ObjectKey(obj_id, version), obj)) if obj_id == *object_id => {
-                Ok(self.object(&ObjectKey(obj_id, version), obj)?)
-            }
+            Some((ObjectKey(obj_id, version), obj)) if obj_id == *object_id => Ok(self
+                .object(&ObjectKey(obj_id, version), obj)
+                .map_err(sui_types::storage::error::Error::custom)?),
             _ => Ok(None),
         }
     }
@@ -514,12 +472,14 @@ impl ObjectStore for AuthorityPerpetualTables {
         &self,
         object_id: &ObjectID,
         version: VersionNumber,
-    ) -> Result<Option<Object>, SuiError> {
+    ) -> Result<Option<Object>, sui_types::storage::error::Error> {
         Ok(self
             .objects
-            .get(&ObjectKey(*object_id, version))?
+            .get(&ObjectKey(*object_id, version))
+            .map_err(sui_types::storage::error::Error::custom)?
             .map(|object| self.object(&ObjectKey(*object_id, version), object))
-            .transpose()?
+            .transpose()
+            .map_err(sui_types::storage::error::Error::custom)?
             .flatten())
     }
 }

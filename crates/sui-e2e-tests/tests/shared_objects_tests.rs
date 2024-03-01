@@ -6,6 +6,7 @@ use futures::join;
 use rand::distributions::Distribution;
 use std::ops::Deref;
 use std::time::{Duration, SystemTime};
+use sui_config::node::AuthorityOverloadConfig;
 use sui_core::authority::EffectsNotifyRead;
 use sui_core::consensus_adapter::position_submit_certificate;
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
@@ -132,7 +133,7 @@ async fn shared_object_deletion_multiple_times() {
     let fullnode = test_cluster.spawn_new_fullnode().await.sui_node;
     fullnode
         .state()
-        .db()
+        .get_effects_notify_read()
         .notify_read_executed_effects(digests)
         .await
         .unwrap();
@@ -188,7 +189,7 @@ async fn shared_object_deletion_multiple_times_cert_racing() {
     let fullnode = test_cluster.spawn_new_fullnode().await.sui_node;
     fullnode
         .state()
-        .db()
+        .get_effects_notify_read()
         .notify_read_executed_effects(digests)
         .await
         .unwrap();
@@ -301,7 +302,7 @@ async fn shared_object_deletion_multi_certs() {
     let fullnode = test_cluster.spawn_new_fullnode().await.sui_node;
     fullnode
         .state()
-        .db()
+        .get_effects_notify_read()
         .notify_read_executed_effects(vec![inc_tx_a_digest, inc_tx_b_digest])
         .await
         .unwrap();
@@ -484,7 +485,7 @@ async fn access_clock_object_test() {
     assert!(matches!(effects.status(), ExecutionStatus::Success { .. }));
 
     assert_eq!(1, events.data.len());
-    let event = events.data.get(0).unwrap();
+    let event = events.data.first().unwrap();
     let Event { contents, .. } = event;
 
     use serde::{Deserialize, Serialize};
@@ -506,7 +507,10 @@ async fn access_clock_object_test() {
             .sui_node
             .with_async(|node| async {
                 node.state()
-                    .get_transaction_checkpoint(&digest, &node.state().epoch_store_for_testing())
+                    .get_transaction_checkpoint_for_tests(
+                        &digest,
+                        &node.state().epoch_store_for_testing(),
+                    )
                     .unwrap()
             })
             .await;
@@ -528,7 +532,14 @@ async fn access_clock_object_test() {
 
 #[sim_test]
 async fn shared_object_sync() {
-    let test_cluster = TestClusterBuilder::new().build().await;
+    let test_cluster = TestClusterBuilder::new()
+        // Set the threshold high enough so it won't be triggered.
+        .with_authority_overload_config(AuthorityOverloadConfig {
+            max_txn_age_in_queue: Duration::from_secs(60),
+            ..Default::default()
+        })
+        .build()
+        .await;
     let package_id = publish_basics_package(&test_cluster.wallet).await.0;
 
     // Since we use submit_transaction_to_validators in this test, which does not go through fullnode,

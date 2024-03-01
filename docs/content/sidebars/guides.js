@@ -10,6 +10,7 @@ const guides = [
 	{
 		type: 'category',
 		label: 'Developer Guides',
+                collapsed: false,
 		link: {
 			type: 'doc',
 			id: 'guides/developer',
@@ -18,6 +19,7 @@ const guides = [
 			{
 				type: 'category',
 				label: 'Getting Started',
+                                collapsed: false,
 				link: {
 					type: 'doc',
 					id: 'guides/developer/getting-started',
@@ -29,6 +31,7 @@ const guides = [
 					'guides/developer/getting-started/local-network',
 					'guides/developer/getting-started/get-address',
 					'guides/developer/getting-started/get-coins',
+					'guides/developer/getting-started/graphql-rpc',
 				],
 			},
 			{
@@ -55,24 +58,33 @@ const guides = [
 				},
 				items: [
 					'guides/developer/sui-101/shared-owned',
-					'guides/developer/sui-101/create-coin',
+					{
+						type: 'category',
+						label: 'Create Coins and Tokens',
+						link: {
+							type: 'doc',
+							id: 'guides/developer/sui-101/create-coin',
+						},
+						items: [
+							'guides/developer/sui-101/create-coin/regulated',
+							'guides/developer/sui-101/create-coin/in-game-token',
+							'guides/developer/sui-101/create-coin/loyalty',
+						],
+					},
 					'guides/developer/sui-101/create-nft',
 					'guides/developer/sui-101/using-events',
 					'guides/developer/sui-101/access-time',
+					'guides/developer/sui-101/sign-and-send-txn',
+					'guides/developer/sui-101/sponsor-txn',
 					{
 						type: 'category',
-						label: 'Sending Transactions',
-						link: {
-							type: 'doc',
-							id: 'guides/developer/sui-101/send-txn',
-						},
+						label: 'Working with PTBs',
 						items: [
-							'guides/developer/sui-101/sign-txn',
-							'guides/developer/sui-101/sponsor-txn',
+							'guides/developer/sui-101/building-ptb',
 							'guides/developer/sui-101/coin-mgt',
+							'guides/developer/sui-101/simulating-refs',
 						],
 					},
-					'guides/developer/sui-101/building-ptb',
 				],
 			},
 			{
@@ -97,7 +109,7 @@ const guides = [
 					id: 'guides/developer/advanced',
 				},
 				items: [
-					{
+					/*{
 						type: 'category',
 						label: 'Efficient Smart Contracts',
 						link: {
@@ -105,10 +117,10 @@ const guides = [
 							id: 'guides/developer/advanced/efficient-smart-contracts',
 						},
 						items: ['guides/developer/advanced/min-gas-fees'],
-					},
-					'guides/developer/advanced/wallet-integrations',
-					'guides/developer/advanced/security-best-practices',
-					'guides/developer/advanced/maximize-reach',
+					},*/
+					'guides/developer/advanced/asset-tokenization',
+					'guides/developer/advanced/graphql-migration',
+					'guides/developer/advanced/custom-indexer',
 				],
 			},
 			{
@@ -121,10 +133,22 @@ const guides = [
 				items: [
 					'guides/developer/app-examples/e2e-counter',
 					'guides/developer/app-examples/auction',
-					'guides/developer/app-examples/escrow',
+					{
+						type: 'category',
+						label: 'Trading',
+						link: {
+							type: 'doc',
+							id: 'guides/developer/app-examples/trading',
+						},
+						items: [
+							'guides/developer/app-examples/trading/backend',
+							'guides/developer/app-examples/trading/indexer-api',
+							'guides/developer/app-examples/trading/frontend',
+						],
+					},
 					'guides/developer/app-examples/trusted-swap',
 					'guides/developer/app-examples/tic-tac-toe',
-					'guides/developer/app-examples/trusted-swap',
+					'guides/developer/app-examples/recaptcha',
 					'guides/developer/app-examples/turnip-town',
 					{
 						type: 'category',
@@ -163,9 +187,7 @@ const guides = [
 			'guides/operator/genesis',
 			'guides/operator/validator-committee',
 			'guides/operator/validator-tasks',
-			'guides/operator/staking-rewards',
 			'guides/operator/node-tools',
-			'guides/operator/formal-snapshot',
 			'guides/operator/exchange-integration',
 		],
 	},

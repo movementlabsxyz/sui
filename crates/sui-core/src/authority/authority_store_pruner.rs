@@ -12,8 +12,9 @@ use prometheus::{
 };
 use rocksdb::LiveFile;
 use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{sync::Arc, time::Duration};
 use sui_archival::reader::ArchiveReaderBalancer;
 use sui_config::node::AuthorityStorePruningConfig;
@@ -31,12 +32,12 @@ use sui_types::{
 };
 use tokio::sync::oneshot::{self, Sender};
 use tokio::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use typed_store::{Map, TypedStoreError};
 
 use super::authority_store_tables::AuthorityPerpetualTables;
 
-static PERIODIC_PRUNING_TABLES: Lazy<HashSet<String>> = Lazy::new(|| {
+static PERIODIC_PRUNING_TABLES: Lazy<BTreeSet<String>> = Lazy::new(|| {
     [
         "objects",
         "effects",
@@ -58,6 +59,8 @@ pub struct AuthorityStorePruningMetrics {
     pub num_pruned_objects: IntCounter,
     pub num_pruned_tombstones: IntCounter,
     pub last_pruned_effects_checkpoint: IntGauge,
+    pub num_epochs_to_retain_for_objects: IntGauge,
+    pub num_epochs_to_retain_for_checkpoints: IntGauge,
 }
 
 impl AuthorityStorePruningMetrics {
@@ -84,6 +87,18 @@ impl AuthorityStorePruningMetrics {
             last_pruned_effects_checkpoint: register_int_gauge_with_registry!(
                 "last_pruned_effects_checkpoint",
                 "Last pruned effects checkpoint",
+                registry
+            )
+            .unwrap(),
+            num_epochs_to_retain_for_objects: register_int_gauge_with_registry!(
+                "num_epochs_to_retain_for_objects",
+                "Number of epochs to retain for objects",
+                registry
+            )
+            .unwrap(),
+            num_epochs_to_retain_for_checkpoints: register_int_gauge_with_registry!(
+                "num_epochs_to_retain_for_checkpoints",
+                "Number of epochs to retain for checkpoints",
                 registry
             )
             .unwrap(),
@@ -181,10 +196,11 @@ impl AuthorityStorePruner {
         if !object_tombstones_to_prune.is_empty() {
             let mut object_keys_to_delete = vec![];
             for ObjectKey(object_id, seq_number) in object_tombstones_to_prune {
-                for (object_key, _object_value) in perpetual_db.objects.iter_with_bounds(
+                for result in perpetual_db.objects.safe_iter_with_bounds(
                     Some(ObjectKey(object_id, VersionNumber::MIN)),
                     Some(ObjectKey(object_id, seq_number.next())),
                 ) {
+                    let (object_key, _) = result?;
                     assert_eq!(object_key.0, object_id);
                     object_keys_to_delete.push(object_key);
                 }
@@ -407,6 +423,7 @@ impl AuthorityStorePruner {
                 .effects
                 .multi_get(content.iter().map(|tx| tx.effects))?;
 
+            info!("scheduling pruning for checkpoint {:?}", checkpoint_number);
             checkpoints_to_prune.push(*checkpoint.digest());
             checkpoint_content_to_prune.push(content);
             effects_to_prune.extend(effects.into_iter().flatten());
@@ -423,7 +440,7 @@ impl AuthorityStorePruner {
                             checkpoint_number,
                             metrics.clone(),
                             indirect_objects_threshold,
-                            config.enable_pruning_tombstones,
+                            !config.killswitch_tombstone_pruning,
                         )
                         .await?
                     }
@@ -453,7 +470,7 @@ impl AuthorityStorePruner {
                         checkpoint_number,
                         metrics.clone(),
                         indirect_objects_threshold,
-                        config.enable_pruning_tombstones,
+                        !config.killswitch_tombstone_pruning,
                     )
                     .await?
                 }
@@ -474,8 +491,12 @@ impl AuthorityStorePruner {
     fn compact_next_sst_file(
         perpetual_db: Arc<AuthorityPerpetualTables>,
         delay_days: usize,
+        last_processed: Arc<Mutex<HashMap<String, SystemTime>>>,
     ) -> anyhow::Result<Option<LiveFile>> {
         let db_path = perpetual_db.objects.rocksdb.path();
+        let mut state = last_processed
+            .lock()
+            .expect("failed to obtain a lock for last processed SST files");
         let mut sst_file_for_compaction: Option<LiveFile> = None;
         let time_threshold =
             SystemTime::now() - Duration::from_secs(delay_days as u64 * 24 * 60 * 60);
@@ -487,6 +508,7 @@ impl AuthorityStorePruner {
                 || sst_file.start_key.is_none()
                 || sst_file.end_key.is_none()
                 || last_modified > time_threshold
+                || state.get(&sst_file.name).unwrap_or(&UNIX_EPOCH) > &time_threshold
             {
                 continue;
             }
@@ -509,6 +531,7 @@ impl AuthorityStorePruner {
             sst_file.start_key.clone().unwrap(),
             sst_file.end_key.clone().unwrap(),
         )?;
+        state.insert(sst_file.name.clone(), SystemTime::now());
         Ok(Some(sst_file))
     }
 
@@ -527,16 +550,8 @@ impl AuthorityStorePruner {
             "Starting object pruning service with num_epochs_to_retain={}",
             config.num_epochs_to_retain
         );
-        let tick_duration = Duration::from_millis(match config.pruning_run_delay_seconds {
-            None => {
-                if config.num_epochs_to_retain > 0 {
-                    min(epoch_duration_ms / 2, 60 * 60 * 1000)
-                } else {
-                    min(epoch_duration_ms / 2, 60 * 1000)
-                }
-            }
-            Some(duration_seconds) => duration_seconds * 1000,
-        });
+
+        let tick_duration = Duration::from_millis(min(epoch_duration_ms / 2, 60 * 1000));
         let pruning_initial_delay = if cfg!(msim) {
             Duration::from_millis(1)
         } else {
@@ -550,10 +565,12 @@ impl AuthorityStorePruner {
         let perpetual_db_for_compaction = perpetual_db.clone();
         if let Some(delay_days) = config.periodic_compaction_threshold_days {
             spawn_monitored_task!(async move {
+                let last_processed = Arc::new(Mutex::new(HashMap::new()));
                 loop {
                     let db = perpetual_db_for_compaction.clone();
+                    let state = Arc::clone(&last_processed);
                     let result = tokio::task::spawn_blocking(move || {
-                        Self::compact_next_sst_file(db, delay_days)
+                        Self::compact_next_sst_file(db, delay_days, state)
                     })
                     .await;
                     let mut sleep_interval_secs = 1;
@@ -569,6 +586,15 @@ impl AuthorityStorePruner {
                 }
             });
         }
+
+        metrics
+            .num_epochs_to_retain_for_objects
+            .set(config.num_epochs_to_retain as i64);
+        metrics.num_epochs_to_retain_for_checkpoints.set(
+            config
+                .num_epochs_to_retain_for_checkpoints
+                .unwrap_or_default() as i64,
+        );
 
         tokio::task::spawn(async move {
             loop {
@@ -594,12 +620,23 @@ impl AuthorityStorePruner {
         perpetual_db: Arc<AuthorityPerpetualTables>,
         checkpoint_store: Arc<CheckpointStore>,
         objects_lock_table: Arc<RwLockTable<ObjectContentDigest>>,
-        pruning_config: AuthorityStorePruningConfig,
+        mut pruning_config: AuthorityStorePruningConfig,
+        is_validator: bool,
         epoch_duration_ms: u64,
         registry: &Registry,
         indirect_objects_threshold: usize,
         archive_readers: ArchiveReaderBalancer,
     ) -> Self {
+        if pruning_config.num_epochs_to_retain > 0 && pruning_config.num_epochs_to_retain < u64::MAX
+        {
+            warn!("Using objects pruner with num_epochs_to_retain = {} can lead to performance issues", pruning_config.num_epochs_to_retain);
+            if is_validator {
+                warn!("Resetting to aggressive pruner.");
+                pruning_config.num_epochs_to_retain = 0;
+            } else {
+                warn!("Consider using an aggressive pruner (num_epochs_to_retain = 0)");
+            }
+        }
         AuthorityStorePruner {
             _objects_pruner_cancel_handle: Self::setup_pruning(
                 pruning_config,
@@ -665,7 +702,7 @@ mod tests {
         let perpetual_db = typed_store::rocks::open_cf(
             perpetual_db_path,
             Some(db_options),
-            MetricConf::default(),
+            MetricConf::new("perpetual_pruning"),
             &cfs,
         );
 

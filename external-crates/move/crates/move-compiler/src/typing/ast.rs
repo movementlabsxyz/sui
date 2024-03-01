@@ -3,16 +3,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    debug_display,
     diagnostics::WarningFilters,
-    expansion::ast::{Address, Attributes, Fields, Friend, ModuleIdent, SpecId, Value, Visibility},
-    naming::ast::{FunctionSignature, Neighbor, StructDefinition, Type, TypeName_, Type_, Var},
-    parser::ast::{BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, ENTRY_MODIFIER},
-    shared::{ast_debug::*, program_info::TypingProgramInfo, unique_map::UniqueMap},
+    expansion::ast::{Address, Attributes, Fields, Friend, ModuleIdent, Value, Visibility},
+    ice,
+    naming::ast::{
+        BlockLabel, FunctionSignature, Neighbor, StructDefinition, SyntaxMethods, Type, TypeName_,
+        Type_, UseFuns, Var,
+    },
+    parser::ast::{
+        BinOp, ConstantName, Field, FunctionName, StructName, UnaryOp, ENTRY_MODIFIER,
+        MACRO_MODIFIER, NATIVE_MODIFIER,
+    },
+    shared::{
+        ast_debug::*, program_info::TypingProgramInfo, unique_map::UniqueMap, CompilationEnv, Name,
+    },
 };
 use move_ir_types::location::*;
 use move_symbol_pool::Symbol;
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     fmt,
 };
 
@@ -29,27 +39,6 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct Program_ {
     pub modules: UniqueMap<ModuleIdent, ModuleDefinition>,
-    pub scripts: BTreeMap<Symbol, Script>,
-}
-
-//**************************************************************************************************
-// Scripts
-//**************************************************************************************************
-
-#[derive(Debug, Clone)]
-pub struct Script {
-    pub warning_filter: WarningFilters,
-    // package name metadata from compiler arguments, not used for any language rules
-    pub package_name: Option<Symbol>,
-    pub attributes: Attributes,
-    pub loc: Loc,
-    pub immediate_neighbors: UniqueMap<ModuleIdent, Neighbor>,
-    pub used_addresses: BTreeSet<Address>,
-    pub constants: UniqueMap<ConstantName, Constant>,
-    pub function_name: FunctionName,
-    pub function: Function,
-    // module dependencies referenced in specs
-    pub spec_dependencies: BTreeSet<(ModuleIdent, Neighbor)>,
 }
 
 //**************************************************************************************************
@@ -69,12 +58,12 @@ pub struct ModuleDefinition {
     pub dependency_order: usize,
     pub immediate_neighbors: UniqueMap<ModuleIdent, Neighbor>,
     pub used_addresses: BTreeSet<Address>,
+    pub use_funs: UseFuns,
+    pub syntax_methods: SyntaxMethods,
     pub friends: UniqueMap<ModuleIdent, Friend>,
     pub structs: UniqueMap<StructName, StructDefinition>,
     pub constants: UniqueMap<ConstantName, Constant>,
     pub functions: UniqueMap<FunctionName, Function>,
-    // module dependencies referenced in specs
-    pub spec_dependencies: BTreeSet<(ModuleIdent, Neighbor)>,
 }
 
 //**************************************************************************************************
@@ -85,6 +74,7 @@ pub struct ModuleDefinition {
 pub enum FunctionBody_ {
     Defined(Sequence),
     Native,
+    Macro,
 }
 pub type FunctionBody = Spanned<FunctionBody_>;
 
@@ -96,6 +86,7 @@ pub struct Function {
     pub attributes: Attributes,
     pub visibility: Visibility,
     pub entry: Option<Loc>,
+    pub macro_: Option<Loc>,
     pub signature: FunctionSignature,
     pub body: FunctionBody,
 }
@@ -148,39 +139,53 @@ pub struct ModuleCall {
     pub type_arguments: Vec<Type>,
     pub arguments: Box<Exp>,
     pub parameter_types: Vec<Type>,
+    pub method_name: Option<Name>, // if translated from method call
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum BuiltinFunction_ {
     Freeze(Type),
-    Assert(/* is_macro */ bool),
+    Assert(/* is_macro */ Option<Loc>),
 }
 pub type BuiltinFunction = Spanned<BuiltinFunction_>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum UnannotatedExp_ {
-    Unit { trailing: bool },
+    Unit {
+        trailing: bool,
+    },
     Value(Value),
-    Move { from_user: bool, var: Var },
-    Copy { from_user: bool, var: Var },
+    Move {
+        from_user: bool,
+        var: Var,
+    },
+    Copy {
+        from_user: bool,
+        var: Var,
+    },
     Use(Var),
-    Constant(Option<ModuleIdent>, ConstantName),
+    Constant(ModuleIdent, ConstantName),
 
     ModuleCall(Box<ModuleCall>),
     Builtin(Box<BuiltinFunction>, Box<Exp>),
     Vector(Loc, usize, Box<Type>, Box<Exp>),
 
     IfElse(Box<Exp>, Box<Exp>, Box<Exp>),
-    While(Box<Exp>, Box<Exp>),
-    Loop { has_break: bool, body: Box<Exp> },
+    While(BlockLabel, Box<Exp>, Box<Exp>),
+    Loop {
+        name: BlockLabel,
+        has_break: bool,
+        body: Box<Exp>,
+    },
+    NamedBlock(BlockLabel, Sequence),
     Block(Sequence),
     Assign(LValueList, Vec<Option<Type>>, Box<Exp>),
     Mutate(Box<Exp>, Box<Exp>),
     Return(Box<Exp>),
     Abort(Box<Exp>),
-    Break,
-    Continue,
+    Give(BlockLabel, Box<Exp>),
+    Continue(BlockLabel),
 
     Dereference(Box<Exp>),
     UnaryExp(UnaryOp, Box<Exp>),
@@ -196,8 +201,6 @@ pub enum UnannotatedExp_ {
     Cast(Box<Exp>, Box<Type>),
     Annotate(Box<Exp>, Box<Type>),
 
-    Spec(SpecId, BTreeMap<Var, Type>),
-
     UnresolvedError,
 }
 pub type UnannotatedExp = Spanned<UnannotatedExp_>;
@@ -206,11 +209,8 @@ pub struct Exp {
     pub ty: Type,
     pub exp: UnannotatedExp,
 }
-pub fn exp(ty: Type, exp: UnannotatedExp) -> Exp {
-    Exp { ty, exp }
-}
 
-pub type Sequence = VecDeque<SequenceItem>;
+pub type Sequence = (UseFuns, VecDeque<SequenceItem>);
 #[derive(Debug, PartialEq, Clone)]
 pub enum SequenceItem_ {
     Seq(Box<Exp>),
@@ -223,20 +223,6 @@ pub type SequenceItem = Spanned<SequenceItem_>;
 pub enum ExpListItem {
     Single(Exp, Box<Type>),
     Splat(Loc, Exp, Vec<Type>),
-}
-
-pub fn single_item(e: Exp) -> ExpListItem {
-    let ty = Box::new(e.ty.clone());
-    ExpListItem::Single(e, ty)
-}
-
-pub fn splat_item(splat_loc: Loc, e: Exp) -> ExpListItem {
-    let ss = match &e.ty {
-        sp!(_, Type_::Unit) => vec![],
-        sp!(_, Type_::Apply(_, sp!(_, TypeName_::Multiple(_)), ss)) => ss.clone(),
-        _ => panic!("ICE splat of non list type"),
-    };
-    ExpListItem::Splat(splat_loc, e, ss)
 }
 
 //**************************************************************************************************
@@ -252,6 +238,46 @@ impl BuiltinFunction_ {
             B::Assert(_) => NB::ASSERT_MACRO,
         }
     }
+}
+
+pub fn explist(loc: Loc, mut es: Vec<Exp>) -> Exp {
+    match es.len() {
+        0 => {
+            let e__ = UnannotatedExp_::Unit { trailing: false };
+            let ty = sp(loc, Type_::Unit);
+            exp(ty, sp(loc, e__))
+        }
+        1 => es.pop().unwrap(),
+        _ => {
+            let tys = es.iter().map(|e| e.ty.clone()).collect();
+            let items = es.into_iter().map(single_item).collect();
+            let ty = Type_::multiple(loc, tys);
+            exp(ty, sp(loc, UnannotatedExp_::ExpList(items)))
+        }
+    }
+}
+
+pub fn exp(ty: Type, exp: UnannotatedExp) -> Exp {
+    Exp { ty, exp }
+}
+
+pub fn single_item(e: Exp) -> ExpListItem {
+    let ty = Box::new(e.ty.clone());
+    ExpListItem::Single(e, ty)
+}
+
+pub fn splat_item(env: &mut CompilationEnv, splat_loc: Loc, e: Exp) -> ExpListItem {
+    let ss = match &e.ty {
+        sp!(_, Type_::Unit) => vec![],
+        sp!(_, Type_::Apply(_, sp!(_, TypeName_::Multiple(_)), ss)) => ss.clone(),
+        _ => {
+            let mut diag = ice!((splat_loc, "ICE called `splat_item` on a non-list type"));
+            diag.add_note(format!("Expression: {}", debug_display!(e)));
+            env.add_diag(diag);
+            vec![]
+        }
+    };
+    ExpListItem::Splat(splat_loc, e, ss)
 }
 
 //**************************************************************************************************
@@ -276,60 +302,13 @@ impl AstDebug for Program {
 
 impl AstDebug for Program_ {
     fn ast_debug(&self, w: &mut AstWriter) {
-        let Program_ { modules, scripts } = self;
+        let Program_ { modules } = self;
 
         for (m, mdef) in modules.key_cloned_iter() {
             w.write(&format!("module {}", m));
             w.block(|w| mdef.ast_debug(w));
             w.new_line();
         }
-
-        for (n, s) in scripts {
-            w.write(&format!("script {}", n));
-            w.block(|w| s.ast_debug(w));
-            w.new_line()
-        }
-    }
-}
-
-impl AstDebug for Script {
-    fn ast_debug(&self, w: &mut AstWriter) {
-        let Script {
-            warning_filter,
-            package_name,
-            attributes,
-            loc: _loc,
-            immediate_neighbors,
-            used_addresses,
-            constants,
-            function_name,
-            function,
-            spec_dependencies,
-        } = self;
-        warning_filter.ast_debug(w);
-        if let Some(n) = package_name {
-            w.writeln(&format!("{}", n))
-        }
-        attributes.ast_debug(w);
-        for (mident, neighbor) in immediate_neighbors.key_cloned_iter() {
-            w.write(&format!("{mident} is"));
-            neighbor.ast_debug(w);
-            w.writeln(";");
-        }
-        for addr in used_addresses {
-            w.write(&format!("uses address {};", addr));
-            w.new_line()
-        }
-        for (m, neighbor) in spec_dependencies {
-            w.write(&format!("spec_dep {m} is"));
-            neighbor.ast_debug(w);
-            w.writeln(";");
-        }
-        for cdef in constants.key_cloned_iter() {
-            cdef.ast_debug(w);
-            w.new_line();
-        }
-        (*function_name, function).ast_debug(w);
     }
 }
 
@@ -344,11 +323,12 @@ impl AstDebug for ModuleDefinition {
             dependency_order,
             immediate_neighbors,
             used_addresses,
+            use_funs,
+            syntax_methods,
             friends,
             structs,
             constants,
             functions,
-            spec_dependencies,
         } = self;
         warning_filter.ast_debug(w);
         if let Some(n) = package_name {
@@ -370,11 +350,8 @@ impl AstDebug for ModuleDefinition {
             w.write(&format!("uses address {};", addr));
             w.new_line()
         }
-        for (m, neighbor) in spec_dependencies {
-            w.write(&format!("spec_dep {m} is"));
-            neighbor.ast_debug(w);
-            w.writeln(";");
-        }
+        use_funs.ast_debug(w);
+        syntax_methods.ast_debug(w);
         for (mident, _loc) in friends.key_cloned_iter() {
             w.write(&format!("friend {};", mident));
             w.new_line();
@@ -404,6 +381,7 @@ impl AstDebug for (FunctionName, &Function) {
                 attributes,
                 visibility,
                 entry,
+                macro_,
                 signature,
                 body,
             },
@@ -414,14 +392,24 @@ impl AstDebug for (FunctionName, &Function) {
         if entry.is_some() {
             w.write(&format!("{} ", ENTRY_MODIFIER));
         }
+        if macro_.is_some() {
+            w.write(&format!("{} ", MACRO_MODIFIER));
+        }
         if let FunctionBody_::Native = &body.value {
-            w.write("native ");
+            w.write(&format!("{} ", NATIVE_MODIFIER));
         }
         w.write(&format!("fun#{index} {name}"));
         signature.ast_debug(w);
-        match &body.value {
-            FunctionBody_::Defined(body) => body.ast_debug(w),
-            FunctionBody_::Native => w.writeln(";"),
+        body.ast_debug(w);
+    }
+}
+
+impl AstDebug for FunctionBody_ {
+    fn ast_debug(&self, w: &mut AstWriter) {
+        use FunctionBody_ as F;
+        match self {
+            F::Defined(seq) => seq.ast_debug(w),
+            F::Native | F::Macro => w.writeln(";"),
         }
     }
 }
@@ -451,7 +439,11 @@ impl AstDebug for (ConstantName, &Constant) {
 
 impl AstDebug for Sequence {
     fn ast_debug(&self, w: &mut AstWriter) {
-        w.block(|w| w.semicolon(self, |w, item| item.ast_debug(w)))
+        w.block(|w| {
+            let (use_funs, items) = self;
+            use_funs.ast_debug(w);
+            w.semicolon(items, |w, item| item.ast_debug(w))
+        })
     }
 }
 
@@ -518,8 +510,7 @@ impl AstDebug for UnannotatedExp_ {
                 w.write("use@");
                 v.ast_debug(w)
             }
-            E::Constant(None, c) => w.write(&format!("{}", c)),
-            E::Constant(Some(m), c) => w.write(&format!("{}::{}", m, c)),
+            E::Constant(m, c) => w.write(&format!("{}::{}", m, c)),
             E::ModuleCall(mcall) => {
                 mcall.ast_debug(w);
             }
@@ -561,19 +552,30 @@ impl AstDebug for UnannotatedExp_ {
                 w.write(" else ");
                 f.ast_debug(w);
             }
-            E::While(b, e) => {
-                w.write("while (");
+            E::While(name, b, e) => {
+                name.ast_debug(w);
+                w.write(": while (");
                 b.ast_debug(w);
                 w.write(")");
                 e.ast_debug(w);
             }
-            E::Loop { has_break, body } => {
-                w.write("loop");
+            E::Loop {
+                name,
+                has_break,
+                body,
+            } => {
+                name.ast_debug(w);
+                w.write(": loop");
                 if *has_break {
                     w.write("#with_break");
                 }
                 w.write(" ");
                 body.ast_debug(w);
+            }
+            E::NamedBlock(name, seq) => {
+                name.ast_debug(w);
+                w.write(": ");
+                seq.ast_debug(w)
             }
             E::Block(seq) => seq.ast_debug(w),
             E::ExpList(es) => {
@@ -605,8 +607,16 @@ impl AstDebug for UnannotatedExp_ {
                 w.write("abort ");
                 e.ast_debug(w);
             }
-            E::Break => w.write("break"),
-            E::Continue => w.write("continue"),
+            E::Give(name, exp) => {
+                w.write("give@");
+                name.ast_debug(w);
+                w.write(" ");
+                exp.ast_debug(w);
+            }
+            E::Continue(name) => {
+                w.write("continue@");
+                name.ast_debug(w);
+            }
             E::Dereference(e) => {
                 w.write("*");
                 e.ast_debug(w)
@@ -661,14 +671,6 @@ impl AstDebug for UnannotatedExp_ {
                 ty.ast_debug(w);
                 w.write(")");
             }
-            E::Spec(u, used_locals) => {
-                w.write(&format!("spec #{}", u));
-                if !used_locals.is_empty() {
-                    w.write("uses [");
-                    w.comma(used_locals, |w, (n, ty)| w.annotate(|w| n.ast_debug(w), ty));
-                    w.write("]");
-                }
-            }
             E::UnresolvedError => w.write("_|_"),
         }
     }
@@ -689,6 +691,7 @@ impl AstDebug for ModuleCall {
             type_arguments,
             parameter_types,
             arguments,
+            method_name: _,
         } = self;
         w.write(&format!("{}::{}", module, name));
         if !parameter_types.is_empty() {

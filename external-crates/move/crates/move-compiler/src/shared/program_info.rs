@@ -9,7 +9,8 @@ use move_symbol_pool::Symbol;
 use crate::{
     expansion::ast::{AbilitySet, Attributes, ModuleIdent, Visibility},
     naming::ast::{
-        self as N, FunctionSignature, ResolvedUseFuns, StructDefinition, StructTypeParameter, Type,
+        self as N, FunctionSignature, ResolvedUseFuns, StructDefinition, StructTypeParameter,
+        SyntaxMethods, Type,
     },
     parser::ast::{ConstantName, FunctionName, StructName},
     shared::unique_map::UniqueMap,
@@ -24,6 +25,7 @@ pub struct FunctionInfo {
     pub defined_loc: Loc,
     pub visibility: Visibility,
     pub entry: Option<Loc>,
+    pub macro_: Option<Loc>,
     pub signature: FunctionSignature,
 }
 
@@ -39,6 +41,7 @@ pub struct ModuleInfo {
     pub attributes: Attributes,
     pub package: Option<Symbol>,
     pub use_funs: ResolvedUseFuns,
+    pub syntax_methods: SyntaxMethods,
     pub friends: UniqueMap<ModuleIdent, Loc>,
     pub structs: UniqueMap<StructName, StructDefinition>,
     pub functions: UniqueMap<FunctionName, FunctionInfo>,
@@ -62,6 +65,7 @@ macro_rules! program_info {
                 defined_loc: fname.loc(),
                 visibility: fdef.visibility.clone(),
                 entry: fdef.entry,
+                macro_: fdef.macro_,
                 signature: fdef.signature.clone(),
             });
             let constants = mdef.constants.ref_map(|cname, cdef| ConstantInfo {
@@ -77,6 +81,7 @@ macro_rules! program_info {
                 attributes: mdef.attributes.clone(),
                 package: mdef.package_name,
                 use_funs,
+                syntax_methods: mdef.syntax_methods.clone(),
                 friends: mdef.friends.ref_map(|_, friend| friend.loc),
                 structs,
                 functions,
@@ -181,5 +186,14 @@ impl NamingProgramInfo {
             .into_iter()
             .map(|(mident, minfo)| (mident, minfo.use_funs))
             .collect()
+    }
+
+    pub fn set_module_syntax_methods(
+        &mut self,
+        mident: ModuleIdent,
+        syntax_methods: SyntaxMethods,
+    ) {
+        let syntax_methods_ref = &mut self.modules.get_mut(&mident).unwrap().syntax_methods;
+        *syntax_methods_ref = syntax_methods;
     }
 }

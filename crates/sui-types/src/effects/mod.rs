@@ -24,7 +24,7 @@ use crate::transaction::{SenderSignedData, TransactionDataAPI, VersionedProtocol
 use effects_v1::TransactionEffectsV1;
 pub use effects_v2::UnchangedSharedKind;
 use enum_dispatch::enum_dispatch;
-pub use object_change::{EffectsObjectChange, IDOperation, ObjectIn, ObjectOut};
+pub use object_change::{EffectsObjectChange, ObjectIn, ObjectOut};
 use serde::{Deserialize, Serialize};
 use shared_crypto::intent::IntentScope;
 use std::collections::BTreeMap;
@@ -95,6 +95,10 @@ impl Message for TransactionEffects {
         TransactionEffectsDigest::new(default_hash(self))
     }
 
+    fn verify_user_input(&self) -> SuiResult {
+        Ok(())
+    }
+
     fn verify_epoch(&self, _: EpochId) -> SuiResult {
         // Authorities are allowed to re-sign effects from prior epochs, so we do not verify the
         // epoch here.
@@ -106,7 +110,7 @@ impl UnauthenticatedMessage for TransactionEffects {}
 
 impl Default for TransactionEffects {
     fn default() -> Self {
-        TransactionEffects::V1(Default::default())
+        TransactionEffects::V2(Default::default())
     }
 }
 
@@ -359,6 +363,9 @@ pub trait TransactionEffectsAPI {
     fn executed_epoch(&self) -> EpochId;
     fn modified_at_versions(&self) -> Vec<(ObjectID, SequenceNumber)>;
 
+    /// The version assigned to all output objects (apart from packages).
+    fn lamport_version(&self) -> SequenceNumber;
+
     /// Metadata of objects prior to modification. This includes any object that exists in the
     /// store prior to this transaction and is modified in this transaction.
     /// It includes objects that are mutated, wrapped and deleted.
@@ -376,6 +383,8 @@ pub trait TransactionEffectsAPI {
     fn deleted(&self) -> Vec<ObjectRef>;
     fn unwrapped_then_deleted(&self) -> Vec<ObjectRef>;
     fn wrapped(&self) -> Vec<ObjectRef>;
+
+    fn object_changes(&self) -> Vec<ObjectChange>;
 
     // TODO: We should consider having this function to return Option.
     // When the gas object is not available (i.e. system transaction), we currently return
@@ -414,6 +423,23 @@ pub trait TransactionEffectsAPI {
 
     // Adding a tombstone for a deleted object.
     fn unsafe_add_object_tombstone_for_testing(&mut self, obj_ref: ObjectRef);
+}
+
+#[derive(Clone)]
+pub struct ObjectChange {
+    pub id: ObjectID,
+    pub input_version: Option<SequenceNumber>,
+    pub input_digest: Option<ObjectDigest>,
+    pub output_version: Option<SequenceNumber>,
+    pub output_digest: Option<ObjectDigest>,
+    pub id_operation: IDOperation,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Serialize, Deserialize)]
+pub enum IDOperation {
+    None,
+    Created,
+    Deleted,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize, Default)]

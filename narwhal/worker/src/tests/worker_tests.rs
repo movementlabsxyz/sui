@@ -40,7 +40,7 @@ impl TransactionValidator for NilTxValidator {
     fn validate(&self, _tx: &[u8]) -> Result<(), Self::Error> {
         eyre::bail!("Invalid transaction");
     }
-    async fn validate_batch(
+    fn validate_batch(
         &self,
         _txs: &Batch,
         _protocol_config: &ProtocolConfig,
@@ -417,6 +417,7 @@ async fn get_network_peers_from_admin_server() {
         store.proposer_store.clone(),
         store.payload_store.clone(),
         store.vote_digest_store.clone(),
+        store.randomness_store.clone(),
         tx_new_certificates,
         rx_feedback,
         rx_consensus_round_updates,
@@ -532,6 +533,7 @@ async fn get_network_peers_from_admin_server() {
         store.proposer_store.clone(),
         store.payload_store.clone(),
         store.vote_digest_store.clone(),
+        store.randomness_store.clone(),
         tx_new_certificates_2,
         rx_feedback_2,
         rx_consensus_round_updates,

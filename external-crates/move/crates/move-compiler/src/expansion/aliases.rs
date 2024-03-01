@@ -2,14 +2,15 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use move_ir_types::location::Loc;
+
 use crate::{
-    expansion::ast::{self as E, ModuleIdent, ModuleIdent_},
-    parser::ast::{self as P, ModuleName},
+    diagnostics::Diagnostic,
+    expansion::alias_map_builder::*,
+    ice,
     shared::{unique_map::UniqueMap, unique_set::UniqueSet, *},
 };
-use move_ir_types::location::*;
-
-type ScopeDepth = usize;
+use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Debug)]
 pub struct AliasSet {
@@ -17,34 +18,15 @@ pub struct AliasSet {
     pub members: UniqueSet<Name>,
 }
 
-#[derive(Clone, Debug)]
-pub struct AliasMapBuilder {
-    modules: UniqueMap<Name, (ModuleIdent, /* is_implicit */ bool)>,
-    members: UniqueMap<Name, ((ModuleIdent, Name), /* is_implicit */ bool)>,
-}
-
-#[derive(Clone, Debug)]
 pub struct AliasMap {
-    modules: UniqueMap<Name, (Option<ScopeDepth>, ModuleIdent)>,
-    members: UniqueMap<Name, (Option<ScopeDepth>, (ModuleIdent, Name))>,
-    // essentially a mapping from ScopeDepth => AliasSet, which are the unused aliases at that depth
-    unused: Vec<AliasSet>,
-}
-
-pub struct OldAliasMap(Option<AliasMap>);
-
-pub struct ParserExplicitUseFun {
-    pub loc: Loc,
-    pub attributes: E::Attributes,
-    pub is_public: Option<Loc>,
-    pub function: Box<P::NameAccessChain>,
-    pub ty: Box<P::NameAccessChain>,
-    pub method: Name,
-}
-
-pub struct UseFunsBuilder {
-    pub explicit: Vec<ParserExplicitUseFun>,
-    pub implicit: UniqueMap<Name, E::ImplicitUseFunCandidate>,
+    unused: BTreeSet<AliasEntry>,
+    // the start of an access path, excludes functions
+    leading_access: UniqueMap<Name, LeadingAccessEntry>,
+    // a module member is expected, not a module
+    // For now, this excludes local variables because the only case where this can overlap is with
+    // macro lambdas, but those have to have a leading `$` and cannot conflict with module members
+    module_members: UniqueMap<Name, MemberEntry>,
+    previous: Option<Box<AliasMap>>,
 }
 
 impl AliasSet {
@@ -57,245 +39,193 @@ impl AliasSet {
 
     #[allow(unused)]
     pub fn is_empty(&self) -> bool {
-        let Self { modules, members } = self;
-        modules.is_empty() && members.is_empty()
+        self.modules.is_empty() && self.members.is_empty()
     }
 }
 
-impl AliasMapBuilder {
-    pub fn new() -> Self {
-        Self {
-            modules: UniqueMap::new(),
-            members: UniqueMap::new(),
+macro_rules! resolve_alias {
+    ($map:expr, .$namespace:ident, $name:expr) => {{
+        let mut current_scope = Some($map);
+        let name = $name;
+        loop {
+            let Some(scope) = current_scope else {
+                break None;
+            };
+            let Some(entry) = scope.$namespace.get(name).copied() else {
+                current_scope = scope.previous.as_mut().map(|x| &mut **x);
+                continue;
+            };
+            // Note, might have already been removed by a different `$namespace` resolution
+            scope.unused.remove(&(*name, entry).into());
+
+            let original_name = scope.$namespace.get_full_key(&name).unwrap();
+            break Some((original_name, entry));
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        let Self { modules, members } = self;
-        modules.is_empty() && members.is_empty()
-    }
-
-    fn remove_module_alias_(&mut self, alias: &Name) -> Result<(), Loc> {
-        let loc = self.modules.get_loc(alias).cloned();
-        match self.modules.remove(alias) {
-            None => Ok(()),
-            Some(_) => Err(loc.unwrap()),
-        }
-    }
-
-    fn remove_member_alias_(&mut self, alias: &Name) -> Result<(), Loc> {
-        let loc = self.members.get_loc(alias).cloned();
-        match self.members.remove(alias) {
-            None => Ok(()),
-            Some(_) => Err(loc.unwrap()),
-        }
-    }
-
-    /// Adds a module alias to the map.
-    /// Errors if one already bound for that alias
-    pub fn add_module_alias(&mut self, alias: Name, ident: ModuleIdent) -> Result<(), Loc> {
-        let result = self.remove_module_alias_(&alias);
-        self.modules
-            .add(alias, (ident, /* is_implicit */ false))
-            .unwrap();
-        result
-    }
-
-    /// Adds a member alias to the map.
-    /// Errors if one already bound for that alias
-    pub fn add_member_alias(
-        &mut self,
-        alias: Name,
-        ident: ModuleIdent,
-        member: Name,
-    ) -> Result<(), Loc> {
-        let result = self.remove_member_alias_(&alias);
-        self.members
-            .add(alias, ((ident, member), /* is_implicit */ false))
-            .unwrap();
-        result
-    }
-
-    /// Same as `add_module_alias` but it does not update the scope, and as such it will not be
-    /// reported as unused
-    pub fn add_implicit_module_alias(
-        &mut self,
-        alias: Name,
-        ident: ModuleIdent,
-    ) -> Result<(), Loc> {
-        let result = self.remove_module_alias_(&alias);
-        self.modules
-            .add(alias, (ident, /* is_implicit */ true))
-            .unwrap();
-        result
-    }
-
-    /// Same as `add_member_alias` but it does not update the scope, and as such it will not be
-    /// reported as unused
-    pub fn add_implicit_member_alias(
-        &mut self,
-        alias: Name,
-        ident: ModuleIdent,
-        member: Name,
-    ) -> Result<(), Loc> {
-        let result = self.remove_member_alias_(&alias);
-        self.members
-            .add(alias, ((ident, member), /* is_implicit */ true))
-            .unwrap();
-        result
-    }
+    }};
 }
 
 impl AliasMap {
     pub fn new() -> Self {
         Self {
-            modules: UniqueMap::new(),
-            members: UniqueMap::new(),
-            unused: vec![],
+            unused: BTreeSet::new(),
+            leading_access: UniqueMap::new(),
+            module_members: UniqueMap::new(),
+            previous: None,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        let Self {
-            modules,
-            members,
-            unused: _,
-        } = self;
-        modules.is_empty() && members.is_empty()
+    pub fn resolve_leading_access(&mut self, name: &Name) -> Option<(Name, LeadingAccessEntry)> {
+        let (name, entry) = resolve_alias!(self, .leading_access, name)?;
+        match &entry {
+            LeadingAccessEntry::Module(_)
+            | LeadingAccessEntry::Address(_)
+            | LeadingAccessEntry::Member(_, _) => Some((name, entry)),
+            // For code legacy reasons, don't resolve type parameters, they are just here for
+            // shadowing
+            LeadingAccessEntry::TypeParam => None,
+        }
     }
 
-    fn current_depth(&self) -> usize {
-        self.unused.len()
+    pub fn resolve_call(&mut self, name: &Name) -> Option<(Name, MemberEntry)> {
+        let (name, entry) = resolve_alias!(self, .module_members, name)?;
+        match &entry {
+            MemberEntry::Member(_, _) => Some((name, entry)),
+            // For code legacy reasons, don't resolve type parameters, they are just here for
+            // shadowing
+            MemberEntry::TypeParam => None,
+        }
     }
 
-    pub fn module_alias_get(&mut self, n: &Name) -> Option<ModuleIdent> {
-        match self.modules.get_mut(n) {
-            None => None,
-            Some((depth_opt, ident)) => {
-                if let Some(depth) = depth_opt {
-                    self.unused[*depth].modules.remove(n);
-                }
-                *depth_opt = None;
-                // We are preserving the name's original location, rather than referring to where
-                // the alias was defined. The name represents JUST the module name, though, so we do
-                // not change location of the address as we don't have this information.
-                // TODO maybe we should also keep the alias reference (or its location)?
-                let sp!(
-                    _,
-                    ModuleIdent_ {
-                        address,
-                        module: ModuleName(sp!(_, module))
-                    }
-                ) = ident;
-                let address = *address;
-                let module = ModuleName(sp(n.loc, *module));
-                Some(sp(n.loc, ModuleIdent_ { address, module }))
+    pub fn resolve(&mut self, namespace: NameSpace, name: &Name) -> Option<AliasEntry> {
+        match namespace {
+            NameSpace::LeadingAccess => self
+                .resolve_leading_access(name)
+                .map(|resolved| resolved.into()),
+            NameSpace::ModuleMembers => self.resolve_call(name).map(|resolved| resolved.into()),
+        }
+    }
+
+    pub fn resolve_any_for_error(&mut self, name: &Name) -> Option<AliasEntry> {
+        for namespace in [NameSpace::LeadingAccess, NameSpace::ModuleMembers] {
+            if let Some(entry) = self.resolve(namespace, name) {
+                return Some(entry);
             }
         }
+        None
     }
 
-    pub fn member_alias_get(&mut self, n: &Name) -> Option<(ModuleIdent, Name)> {
-        match self.members.get_mut(n) {
-            None => None,
-            Some((depth_opt, (sp!(mem_mod_loc, mem_mod), sp!(_, mem_name)))) => {
-                if let Some(depth) = depth_opt {
-                    self.unused[*depth].members.remove(n);
-                }
-                *depth_opt = None;
-                // We are preserving the name's original location, rather than referring to where
-                // the alias was defined. The name represents JUST the member name, though, so we do
-                // not change location of the module as we don't have this information.
-                // TODO maybe we should also keep the alias reference (or its location)?
-                Some((sp(*mem_mod_loc, *mem_mod), sp(n.loc, *mem_name)))
-            }
-        }
-    }
-
-    /// Adds all of the new items in the new inner scope as shadowing the outer one.
-    /// Gives back the outer scope
-    pub fn add_and_shadow_all(&mut self, shadowing: AliasMapBuilder) -> OldAliasMap {
-        if shadowing.is_empty() {
-            return OldAliasMap(None);
-        }
-
-        let outer_scope = OldAliasMap(Some(self.clone()));
-        let AliasMapBuilder {
-            modules: new_modules,
-            members: new_members,
-        } = shadowing;
-
-        let next_depth = self.current_depth();
-        let mut current_scope = AliasSet::new();
-        for (alias, (ident, is_implicit)) in new_modules {
-            if !is_implicit {
-                current_scope.modules.add(alias).unwrap();
-            }
-            self.modules.remove(&alias);
-            self.modules.add(alias, (Some(next_depth), ident)).unwrap();
-        }
-        for (alias, (ident_member, is_implicit)) in new_members {
-            if !is_implicit {
-                current_scope.members.add(alias).unwrap();
-            }
-            self.members.remove(&alias);
-            self.members
-                .add(alias, (Some(next_depth), ident_member))
-                .unwrap();
-        }
-        self.unused.push(current_scope);
-        outer_scope
-    }
-
-    /// Similar to add_and_shadow but just removes aliases now shadowed by a type parameter
-    pub fn shadow_for_type_parameters<'a, I: IntoIterator<Item = &'a Name>>(
+    /// Pushes a new scope, adding all of the new items to it (shadowing the outer one).
+    /// Returns any name collisions that occur between addresses, members, and modules in the map
+    /// builder.
+    pub fn push_alias_scope(
         &mut self,
-        tparams: I,
-    ) -> OldAliasMap
+        loc: Loc,
+        new_aliases: AliasMapBuilder,
+    ) -> Result<(), Box<Diagnostic>> {
+        let AliasMapBuilder::Namespaced {
+            leading_access: new_leading_access,
+            module_members: new_module_members,
+        } = new_aliases
+        else {
+            return Err(Box::new(ice!((
+                loc,
+                "ICE alias map builder should be namespaced for 2024 paths"
+            ))));
+        };
+
+        let mut unused = BTreeSet::new();
+        for (alias, (entry, is_implicit)) in new_leading_access.key_cloned_iter() {
+            if !*is_implicit {
+                unused.insert((alias, *entry).into());
+            }
+        }
+        for (alias, (entry, is_implicit)) in new_module_members.key_cloned_iter() {
+            if !*is_implicit {
+                unused.insert((alias, *entry).into());
+            }
+        }
+
+        let leading_access = new_leading_access.map(|_alias, (entry, _is_implicit)| entry);
+        let module_members = new_module_members.map(|_alias, (entry, _is_implicit)| entry);
+
+        let new_map = Self {
+            unused,
+            leading_access,
+            module_members,
+            previous: None,
+        };
+
+        // set the previous scope
+        let previous = std::mem::replace(self, new_map);
+        self.previous = Some(Box::new(previous));
+        Ok(())
+    }
+
+    /// Similar to add_and_shadow but just hides aliases now shadowed by a type parameter.
+    /// Type parameters are never resolved. We track them to apply appropriate shadowing.
+    pub fn push_type_parameters<'a, I: IntoIterator<Item = &'a Name>>(&mut self, tparams: I)
     where
         I::IntoIter: ExactSizeIterator,
     {
-        let tparams_iter = tparams.into_iter();
-        if tparams_iter.len() == 0 {
-            return OldAliasMap(None);
+        let mut new_map = Self::new();
+        for tparam in tparams {
+            // ignore duplicates, they will be checked in naming
+            let _ = new_map
+                .leading_access
+                .add(*tparam, LeadingAccessEntry::TypeParam);
+            let _ = new_map.module_members.add(*tparam, MemberEntry::TypeParam);
         }
 
-        let outer_scope = OldAliasMap(Some(self.clone()));
-        self.unused.push(AliasSet::new());
-        for tp_name in tparams_iter {
-            self.members.remove(tp_name);
-        }
-        outer_scope
+        // set the previous scope
+        let previous = std::mem::replace(self, new_map);
+        self.previous = Some(Box::new(previous));
     }
 
-    /// Resets the alias map and gives the set of aliases that were unused
-    pub fn set_to_outer_scope(&mut self, outer_scope: OldAliasMap) -> AliasSet {
-        let outer_scope = match outer_scope.0 {
-            None => return AliasSet::new(),
-            Some(outer) => outer,
-        };
-        let mut inner_scope = std::mem::replace(self, outer_scope);
-        let outer_scope = self;
-        assert!(outer_scope.current_depth() + 1 == inner_scope.current_depth());
-        let unused = inner_scope.unused.pop().unwrap();
-        outer_scope.unused = inner_scope.unused;
-        unused
-    }
-}
-
-impl OldAliasMap {
-    pub fn is_empty(&self) -> bool {
-        match &self.0 {
-            None => true,
-            Some(aliases) => aliases.is_empty(),
+    /// Resets the alias map to the previous scope, and returns the set of unused aliases
+    pub fn pop_scope(&mut self) -> AliasSet {
+        let previous = self
+            .previous
+            .take()
+            .map(|prev| *prev)
+            .unwrap_or_else(Self::new);
+        let popped = std::mem::replace(self, previous);
+        let mut result = AliasSet::new();
+        for alias_entry in popped.unused {
+            match alias_entry {
+                AliasEntry::Module(name, _) => result.modules.add(name).unwrap(),
+                AliasEntry::Member(name, _, _) => result.members.add(name).unwrap(),
+                AliasEntry::Address(_, _) | AliasEntry::TypeParam(_) => (),
+            }
         }
+        result
     }
 }
 
-impl UseFunsBuilder {
-    pub fn new() -> Self {
-        Self {
-            explicit: vec![],
-            implicit: UniqueMap::new(),
+//**************************************************************************************************
+// Debug
+//**************************************************************************************************
+
+impl fmt::Debug for AliasMap {
+    fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
+        let Self {
+            unused,
+            leading_access,
+            module_members,
+            previous,
+        } = self;
+        writeln!(f, "AliasMap(\n  unused: [")?;
+        for entry in unused {
+            writeln!(f, "    {entry:?},")?;
         }
+        writeln!(f, "],\n  modules: [")?;
+        for (_, alias, entry) in leading_access {
+            writeln!(f, "    {alias} => {entry:?}")?;
+        }
+        writeln!(f, "],\n  members: [")?;
+        for (_, alias, entry) in module_members {
+            writeln!(f, "    {alias} => {entry:?}")?;
+        }
+        writeln!(f, "])")?;
+        writeln!(f, "--> PREVIOUS \n: {previous:?}")
     }
 }

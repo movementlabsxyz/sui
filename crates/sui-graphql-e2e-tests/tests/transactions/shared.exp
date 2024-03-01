@@ -1,0 +1,116 @@
+processed 7 tasks
+
+task 1 'publish'. lines 6-26:
+created: object(1,0), object(1,1)
+mutated: object(0,0)
+gas summary: computation_cost: 1000000, storage_cost: 6862800,  storage_rebate: 0, non_refundable_storage_fee: 0
+
+task 2 'programmable'. lines 28-29:
+mutated: object(0,0)
+gas summary: computation_cost: 1000000, storage_cost: 988000,  storage_rebate: 978120, non_refundable_storage_fee: 9880
+
+task 3 'programmable'. lines 31-32:
+mutated: object(0,0), object(1,0)
+gas summary: computation_cost: 1000000, storage_cost: 2272400,  storage_rebate: 2249676, non_refundable_storage_fee: 22724
+
+task 4 'programmable'. lines 34-36:
+mutated: object(0,0), object(1,0)
+gas summary: computation_cost: 1000000, storage_cost: 2272400,  storage_rebate: 2249676, non_refundable_storage_fee: 22724
+
+task 5 'create-checkpoint'. lines 38-38:
+Checkpoint created: 1
+
+task 6 'run-graphql'. lines 40-88:
+Response: {
+  "data": {
+    "transactionBlocks": {
+      "nodes": [
+        {
+          "kind": {
+            "__typename": "ProgrammableTransactionBlock",
+            "transactions": {
+              "nodes": [
+                {
+                  "package": "0x061997a072c547d571b9a25dab00c937af2771f896e6719d4c6a887cf52d9fcd",
+                  "module": "m",
+                  "functionName": "get"
+                }
+              ]
+            }
+          },
+          "effects": {
+            "status": "SUCCESS",
+            "unchangedSharedObjects": {
+              "nodes": [
+                {
+                  "__typename": "SharedObjectRead",
+                  "address": "0xde75f3f89d49c3b1add872b8e00d07d65293c999fc7fde03f1fdf0552583d8dd",
+                  "version": 2,
+                  "digest": "3PzhVyoks9NLGMaxKWuYXcuH28t74Y7MScAXjY3raJf1",
+                  "object": {
+                    "asMoveObject": {
+                      "contents": {
+                        "type": {
+                          "repr": "0x061997a072c547d571b9a25dab00c937af2771f896e6719d4c6a887cf52d9fcd::m::Foo"
+                        },
+                        "json": {
+                          "id": "0xde75f3f89d49c3b1add872b8e00d07d65293c999fc7fde03f1fdf0552583d8dd",
+                          "x": "0"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": {
+            "__typename": "ProgrammableTransactionBlock",
+            "transactions": {
+              "nodes": [
+                {
+                  "package": "0x061997a072c547d571b9a25dab00c937af2771f896e6719d4c6a887cf52d9fcd",
+                  "module": "m",
+                  "functionName": "inc"
+                }
+              ]
+            }
+          },
+          "effects": {
+            "status": "SUCCESS",
+            "unchangedSharedObjects": {
+              "nodes": []
+            }
+          }
+        },
+        {
+          "kind": {
+            "__typename": "ProgrammableTransactionBlock",
+            "transactions": {
+              "nodes": [
+                {
+                  "package": "0x061997a072c547d571b9a25dab00c937af2771f896e6719d4c6a887cf52d9fcd",
+                  "module": "m",
+                  "functionName": "get"
+                },
+                {
+                  "package": "0x061997a072c547d571b9a25dab00c937af2771f896e6719d4c6a887cf52d9fcd",
+                  "module": "m",
+                  "functionName": "inc"
+                }
+              ]
+            }
+          },
+          "effects": {
+            "status": "SUCCESS",
+            "unchangedSharedObjects": {
+              "nodes": []
+            }
+          }
+        }
+      ]
+    }
+  }
+}

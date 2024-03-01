@@ -405,7 +405,9 @@ impl TransactionBuilder {
                     self.get_object_arg(
                         id,
                         &mut objects,
-                        matches!(expected_type, SignatureToken::MutableReference(_)),
+                        // Is mutable if passed by mutable reference or by value
+                        matches!(expected_type, SignatureToken::MutableReference(_))
+                            || !expected_type.is_reference(),
                         &view,
                         &expected_type,
                     )
@@ -769,7 +771,7 @@ impl TransactionBuilder {
     }
 
     // TODO: we should add retrial to reduce the transaction building error rate
-    async fn get_object_ref(&self, object_id: ObjectID) -> anyhow::Result<ObjectRef> {
+    pub async fn get_object_ref(&self, object_id: ObjectID) -> anyhow::Result<ObjectRef> {
         self.get_object_ref_and_type(object_id)
             .await
             .map(|(oref, _)| oref)

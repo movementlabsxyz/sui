@@ -8,16 +8,12 @@ use crate::{
     diag,
     diagnostics::{Diagnostic, WarningFilters},
     editions::Flavor,
-    expansion::ast::{AbilitySet, AttributeName_, Fields, ModuleIdent, Visibility},
+    expansion::ast::{AbilitySet, Fields, ModuleIdent, Visibility},
     naming::ast::{
         self as N, BuiltinTypeName_, FunctionSignature, StructFields, Type, TypeName_, Type_, Var,
     },
     parser::ast::{Ability_, FunctionName, Mutability, StructName},
-    shared::{
-        known_attributes::{KnownAttribute, TestingAttribute},
-        program_info::TypingProgramInfo,
-        CompilationEnv, Identifier,
-    },
+    shared::{program_info::TypingProgramInfo, CompilationEnv, Identifier},
     sui_mode::*,
     typing::{
         ast::{self as T, ModuleCall},
@@ -112,37 +108,19 @@ impl<'a> TypingVisitorContext for Context<'a> {
         self.env.pop_warning_filter_scope()
     }
 
-    fn visit_script_custom(&mut self, _name: Symbol, script: &mut T::Script) -> bool {
-        let config = self.env.package_config(script.package_name);
-        if config.flavor == Flavor::Sui {
-            // TODO point to PTB docs?
-            let msg = "'scripts' are not supported on Sui. \
-                        Consider removing or refactoring into a 'module'";
-            self.env.add_diag(diag!(SCRIPT_DIAG, (script.loc, msg)));
-        }
-        // skip scripts
-        true
-    }
-
     fn visit_module_custom(&mut self, ident: ModuleIdent, mdef: &mut T::ModuleDefinition) -> bool {
         let config = self.env.package_config(mdef.package_name);
         if config.flavor != Flavor::Sui {
-            // skip if not sui
+            // Skip if not sui
             return true;
         }
-
-        if !mdef.is_source_module {
+        if config.is_dependency || !mdef.is_source_module {
             // Skip non-source, dependency modules
             return true;
         }
 
         self.set_module(ident);
-        self.in_test = mdef.attributes.iter().any(|(_, attr_, _)| {
-            matches!(
-                attr_,
-                AttributeName_::Known(KnownAttribute::Testing(TestingAttribute::TestOnly))
-            )
-        });
+        self.in_test = mdef.attributes.is_test_or_test_only();
         if let Some(sdef) = mdef.structs.get_(&self.otw_name()) {
             let valid_fields = if let N::StructFields::Defined(fields) = &sdef.fields {
                 invalid_otw_field_loc(fields).is_none()
@@ -170,11 +148,11 @@ impl<'a> TypingVisitorContext for Context<'a> {
 
     fn visit_function_custom(
         &mut self,
-        module: Option<ModuleIdent>,
+        module: ModuleIdent,
         name: FunctionName,
         fdef: &mut T::Function,
     ) -> bool {
-        debug_assert!(self.current_module == module);
+        debug_assert!(self.current_module.as_ref() == Some(&module));
         function(self, name, fdef);
         // skip since we have already visited the body
         true
@@ -268,18 +246,12 @@ fn function(context: &mut Context, name: FunctionName, fdef: &mut T::Function) {
         body,
         warning_filter: _,
         index: _,
+        macro_: _,
         attributes,
         entry,
     } = fdef;
     let prev_in_test = context.in_test;
-    if attributes.iter().any(|(_, attr_, _)| {
-        matches!(
-            attr_,
-            AttributeName_::Known(KnownAttribute::Testing(
-                TestingAttribute::Test | TestingAttribute::TestOnly
-            ))
-        )
-    }) {
+    if attributes.is_test_or_test_only() {
         context.in_test = true;
     }
     if name.0.value == INIT_FUNCTION_NAME {
@@ -696,7 +668,8 @@ fn is_mut_clock(param_ty: &Type) -> bool {
         | Type_::Param(_)
         | Type_::Var(_)
         | Type_::Anything
-        | Type_::UnresolvedError => false,
+        | Type_::UnresolvedError
+        | Type_::Fun(_, _) => false,
     }
 }
 
@@ -759,7 +732,7 @@ fn is_entry_primitive_ty(param_ty: &Type) -> bool {
         Type_::Unit => false,
 
         // Error case nothing to do
-        Type_::UnresolvedError | Type_::Anything | Type_::Var(_) => true,
+        Type_::UnresolvedError | Type_::Anything | Type_::Var(_) | Type_::Fun(_, _) => true,
     }
 }
 
@@ -789,7 +762,11 @@ fn is_entry_object_ty_inner(param_ty: &Type) -> bool {
         Type_::Apply(Some(abilities), _, _) => abilities.has_ability_(Ability_::Key),
 
         // Error case nothing to do
-        Type_::UnresolvedError | Type_::Anything | Type_::Var(_) | Type_::Unit => true,
+        Type_::UnresolvedError
+        | Type_::Anything
+        | Type_::Var(_)
+        | Type_::Unit
+        | Type_::Fun(_, _) => true,
         // Unreachable cases
         Type_::Apply(None, _, _) => unreachable!("ICE abilities should have been expanded"),
     }
@@ -850,7 +827,7 @@ fn entry_return(
             }
         }
         // Error case nothing to do
-        Type_::UnresolvedError | Type_::Anything | Type_::Var(_) => (),
+        Type_::UnresolvedError | Type_::Anything | Type_::Var(_) | Type_::Fun(_, _) => (),
         // Unreachable cases
         Type_::Apply(None, _, _) => unreachable!("ICE abilities should have been expanded"),
     }
@@ -919,10 +896,7 @@ fn exp(context: &mut Context, e: &T::Exp) {
         }
         T::UnannotatedExp_::Pack(m, s, _, _) => {
             if !context.in_test
-                && !context
-                    .current_module()
-                    .value
-                    .is(SUI_ADDR_NAME, SUI_MODULE_NAME)
+                && !otw_special_cases(context)
                 && context.one_time_witness.as_ref().is_some_and(|otw| {
                     otw.as_ref()
                         .is_ok_and(|o| m == context.current_module() && o == s)
@@ -937,6 +911,16 @@ fn exp(context: &mut Context, e: &T::Exp) {
         }
         _ => (),
     }
+}
+
+fn otw_special_cases(context: &Context) -> bool {
+    BRIDGE_SUPPORTED_ASSET
+        .iter()
+        .any(|token| context.current_module().value.is(BRIDGE_ADDR_NAME, token))
+        || context
+            .current_module()
+            .value
+            .is(SUI_ADDR_NAME, SUI_MODULE_NAME)
 }
 
 fn check_event_emit(context: &mut Context, loc: Loc, mcall: &ModuleCall) {

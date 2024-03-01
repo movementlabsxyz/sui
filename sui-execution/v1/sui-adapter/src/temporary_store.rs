@@ -7,8 +7,6 @@ use move_core_types::language_storage::StructTag;
 use move_core_types::resolver::ResourceResolver;
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::ops::Deref;
-use std::sync::Arc;
 use sui_protocol_config::ProtocolConfig;
 use sui_types::base_types::VersionDigest;
 use sui_types::committee::EpochId;
@@ -19,7 +17,7 @@ use sui_types::execution::{
 };
 use sui_types::execution_status::ExecutionStatus;
 use sui_types::inner_temporary_store::InnerTemporaryStore;
-use sui_types::storage::{BackingStore, PackageObjectArc};
+use sui_types::storage::{BackingStore, PackageObject};
 use sui_types::sui_system_state::{get_sui_system_state_wrapper, AdvanceEpochParams};
 use sui_types::type_resolver::LayoutResolver;
 use sui_types::{
@@ -43,7 +41,7 @@ pub struct TemporaryStore<'backing> {
     // objects
     store: &'backing dyn BackingStore,
     tx_digest: TransactionDigest,
-    input_objects: BTreeMap<ObjectID, Arc<Object>>,
+    input_objects: BTreeMap<ObjectID, Object>,
     /// The version to assign to all objects written by the transaction using this store.
     lamport_timestamp: SequenceNumber,
     mutable_input_refs: BTreeMap<ObjectID, (VersionDigest, Owner)>, // Inputs that are mutable
@@ -54,7 +52,7 @@ pub struct TemporaryStore<'backing> {
 
     /// Every package that was loaded from DB store during execution.
     /// These packages were not previously loaded into the temporary store.
-    runtime_packages_loaded_from_db: RwLock<BTreeMap<ObjectID, PackageObjectArc>>,
+    runtime_packages_loaded_from_db: RwLock<BTreeMap<ObjectID, PackageObject>>,
 
     /// The set of objects that we may receive during execution. Not guaranteed to receive all, or
     /// any of the objects referenced in this set.
@@ -89,7 +87,7 @@ impl<'backing> TemporaryStore<'backing> {
     }
 
     // Helpers to access private fields
-    pub fn objects(&self) -> &BTreeMap<ObjectID, Arc<Object>> {
+    pub fn objects(&self) -> &BTreeMap<ObjectID, Object> {
         &self.input_objects
     }
 
@@ -136,7 +134,7 @@ impl<'backing> TemporaryStore<'backing> {
         }
         for object in to_be_updated {
             // The object must be mutated as it was present in the input objects
-            self.mutate_input_object(object.deref().clone());
+            self.mutate_input_object(object.clone());
         }
     }
 
@@ -478,7 +476,7 @@ impl<'backing> TemporaryStore<'backing> {
         self.execution_results
             .written_objects
             .get(id)
-            .or_else(|| self.input_objects.get(id).map(|o| o.deref()))
+            .or_else(|| self.input_objects.get(id))
     }
 
     pub fn save_loaded_runtime_objects(
@@ -749,8 +747,11 @@ impl<'backing> TemporaryStore<'backing> {
             // new object size
             let new_object_size = object.object_size_for_gas_metering();
             // track changes and compute the new object `storage_rebate`
-            let new_storage_rebate =
-                gas_charger.track_storage_mutation(new_object_size, old_storage_rebate);
+            let new_storage_rebate = gas_charger.track_storage_mutation(
+                object.id(),
+                new_object_size,
+                old_storage_rebate,
+            );
             object.storage_rebate = new_storage_rebate;
         }
 
@@ -772,7 +773,7 @@ impl<'backing> TemporaryStore<'backing> {
                 // Unwrap is safe because this loop iterates through all modified objects.
                 .unwrap()
                 .storage_rebate;
-            gas_charger.track_storage_mutation(0, storage_rebate);
+            gas_charger.track_storage_mutation(*object_id, 0, storage_rebate);
         }
     }
 
@@ -1097,10 +1098,17 @@ impl<'backing> Storage for TemporaryStore<'backing> {
     ) {
         TemporaryStore::save_loaded_runtime_objects(self, loaded_runtime_objects)
     }
+
+    fn save_wrapped_object_containers(
+        &mut self,
+        _wrapped_object_containers: BTreeMap<ObjectID, ObjectID>,
+    ) {
+        unreachable!("Unused in v1")
+    }
 }
 
 impl<'backing> BackingPackageStore for TemporaryStore<'backing> {
-    fn get_package_object(&self, package_id: &ObjectID) -> SuiResult<Option<PackageObjectArc>> {
+    fn get_package_object(&self, package_id: &ObjectID) -> SuiResult<Option<PackageObject>> {
         // We first check the objects in the temporary store because in non-production code path,
         // it is possible to read packages that are just written in the same transaction.
         // This can happen for example when we run the expensive conservation checks, where we may
@@ -1108,7 +1116,7 @@ impl<'backing> BackingPackageStore for TemporaryStore<'backing> {
         // newly written packages for type checking.
         // In production path though, this should never happen.
         if let Some(obj) = self.read_object(package_id) {
-            Ok(Some(PackageObjectArc::new(obj.clone())))
+            Ok(Some(PackageObject::new(obj.clone())))
         } else {
             self.store.get_package_object(package_id).map(|obj| {
                 // Track object but leave unchanged

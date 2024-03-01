@@ -160,8 +160,8 @@ pub struct ChainIdentifier(CheckpointDigest);
 pub static MAINNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
 pub static TESTNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
 
-/// For testing purposes, you can set this environment variable to force protocol config to use
-/// a specific Chain.
+/// For testing purposes or bootstrapping regenesis chaing configuration, you can set
+/// this environment variable to force protocol config to use a specific Chain.
 const SUI_PROTOCOL_CONFIG_CHAIN_OVERRIDE_ENV_VAR_NAME: &str = "SUI_PROTOCOL_CONFIG_CHAIN_OVERRIDE";
 
 static SUI_PROTOCOL_CONFIG_CHAIN_OVERRIDE: Lazy<Option<Chain>> = Lazy::new(|| {
@@ -497,8 +497,10 @@ impl TransactionDigest {
 
     /// A digest we use to signify the parent transaction was the genesis,
     /// ie. for an object there is no parent digest.
+    /// Note that this is not the same as the digest of the genesis transaction,
+    /// which cannot be known ahead of time.
     // TODO(https://github.com/MystenLabs/sui/issues/65): we can pick anything here
-    pub const fn genesis() -> Self {
+    pub const fn genesis_marker() -> Self {
         Self::ZERO
     }
 
@@ -920,5 +922,60 @@ pub struct ZKLoginInputsDigest(Digest);
 impl ZKLoginInputsDigest {
     pub const fn new(digest: [u8; 32]) -> Self {
         Self(Digest::new(digest))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ConsensusCommitDigest(Digest);
+
+impl ConsensusCommitDigest {
+    pub const ZERO: Self = Self(Digest::ZERO);
+
+    pub const fn new(digest: [u8; 32]) -> Self {
+        Self(Digest::new(digest))
+    }
+
+    pub const fn inner(&self) -> &[u8; 32] {
+        self.0.inner()
+    }
+
+    pub const fn into_inner(self) -> [u8; 32] {
+        self.0.into_inner()
+    }
+
+    pub fn random() -> Self {
+        Self(Digest::random())
+    }
+}
+
+impl Default for ConsensusCommitDigest {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl From<ConsensusCommitDigest> for [u8; 32] {
+    fn from(digest: ConsensusCommitDigest) -> Self {
+        digest.into_inner()
+    }
+}
+
+impl From<[u8; 32]> for ConsensusCommitDigest {
+    fn from(digest: [u8; 32]) -> Self {
+        Self::new(digest)
+    }
+}
+
+impl fmt::Display for ConsensusCommitDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for ConsensusCommitDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ConsensusCommitDigest")
+            .field(&self.0)
+            .finish()
     }
 }

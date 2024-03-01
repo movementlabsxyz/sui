@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use sui_config::node::DBCheckpointConfig;
+use sui_config::node::{AuthorityOverloadConfig, DBCheckpointConfig, RunWithRange};
 use sui_config::{Config, SUI_CLIENT_CONFIG, SUI_NETWORK_CONFIG};
 use sui_config::{NodeConfig, PersistedConfig, SUI_KEYSTORE_FILENAME};
 use sui_core::authority_aggregator::AuthorityAggregator;
@@ -36,7 +36,9 @@ use sui_swarm_config::network_config_builder::{
 };
 use sui_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use sui_test_transaction_builder::TestTransactionBuilder;
+use sui_types::base_types::ConciseableName;
 use sui_types::base_types::{AuthorityName, ObjectID, ObjectRef, SuiAddress};
+use sui_types::committee::CommitteeTrait;
 use sui_types::committee::{Committee, EpochId};
 use sui_types::crypto::KeypairTraits;
 use sui_types::crypto::SuiKeyPair;
@@ -53,7 +55,7 @@ use sui_types::transaction::{
 };
 use tokio::time::{timeout, Instant};
 use tokio::{task::JoinHandle, time::sleep};
-use tracing::info;
+use tracing::{error, info};
 
 const NUM_VALIDATOR: usize = 4;
 
@@ -225,6 +227,13 @@ impl TestCluster {
             .await
     }
 
+    pub async fn get_latest_object_ref(&self, object_id: &ObjectID) -> ObjectRef {
+        self.get_object_from_fullnode_store(object_id)
+            .await
+            .unwrap()
+            .compute_object_reference()
+    }
+
     pub async fn get_object_or_tombstone_from_fullnode_store(
         &self,
         object_id: ObjectID,
@@ -232,7 +241,7 @@ impl TestCluster {
         self.fullnode_handle
             .sui_node
             .state()
-            .db()
+            .get_cache_reader()
             .get_latest_object_ref_or_tombstone(object_id)
             .unwrap()
             .unwrap()
@@ -274,7 +283,42 @@ impl TestCluster {
             unreachable!("Broken reconfig channel");
         })
         .await
-        .expect("Timed out waiting for cluster to target epoch")
+        .unwrap_or_else(|_| {
+            panic!("Timed out waiting for cluster to target epoch {target_epoch:?}")
+        })
+    }
+
+    pub async fn wait_for_run_with_range_shutdown_signal(&self) -> Option<RunWithRange> {
+        self.wait_for_run_with_range_shutdown_signal_with_timeout(Duration::from_secs(60))
+            .await
+    }
+
+    pub async fn wait_for_run_with_range_shutdown_signal_with_timeout(
+        &self,
+        timeout_dur: Duration,
+    ) -> Option<RunWithRange> {
+        let mut shutdown_channel_rx = self
+            .fullnode_handle
+            .sui_node
+            .with(|node| node.subscribe_to_shutdown_channel());
+
+        timeout(timeout_dur, async move {
+            tokio::select! {
+                msg = shutdown_channel_rx.recv() =>
+                {
+                    match msg {
+                        Ok(Some(run_with_range)) => Some(run_with_range),
+                        Ok(None) => None,
+                        Err(e) => {
+                            error!("failed recv from sui-node shutdown channel: {}", e);
+                            None
+                        },
+                    }
+                },
+            }
+        })
+        .await
+        .expect("Timed out waiting for cluster to hit target epoch and recv shutdown signal from sui-node")
     }
 
     pub async fn wait_for_protocol_version(
@@ -351,7 +395,15 @@ impl TestCluster {
                     loop {
                         let epoch = node.state().epoch_store_for_testing().epoch();
                         if epoch == target_epoch {
-                            break;
+                            if let Some(agg) = node.clone_authority_aggregator() {
+                                // This is a fullnode, we need to wait for its auth aggregator to reconfigure as well.
+                                if agg.committee.epoch() == target_epoch {
+                                    break;
+                                }
+                            } else {
+                                // This is a validator, we don't need to check the auth aggregator.
+                                break;
+                            }
                         }
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         retries += 1;
@@ -420,7 +472,7 @@ impl TestCluster {
                 while let Some(tx) = txns.next().await {
                     let digest = *tx.transaction_digest();
                     let tx = state
-                        .database
+                        .get_cache_reader()
                         .get_transaction_block(&digest)
                         .unwrap()
                         .unwrap();
@@ -438,6 +490,20 @@ impl TestCluster {
 
     pub async fn test_transaction_builder(&self) -> TestTransactionBuilder {
         let (sender, gas) = self.wallet.get_one_gas_object().await.unwrap().unwrap();
+        self.test_transaction_builder_with_gas_object(sender, gas)
+            .await
+    }
+
+    pub async fn test_transaction_builder_with_sender(
+        &self,
+        sender: SuiAddress,
+    ) -> TestTransactionBuilder {
+        let gas = self
+            .wallet
+            .get_one_gas_object_owned_by_address(sender)
+            .await
+            .unwrap()
+            .unwrap();
         self.test_transaction_builder_with_gas_object(sender, gas)
             .await
     }
@@ -564,6 +630,31 @@ impl TestCluster {
         ))
     }
 
+    /// This call sends some funds from the seeded address to the funding
+    /// address for the given amount and returns the gas object ref. This
+    /// is useful to construct transactions from the funding address.
+    pub async fn fund_address_and_return_gas(
+        &self,
+        rgp: u64,
+        amount: Option<u64>,
+        funding_address: SuiAddress,
+    ) -> ObjectRef {
+        let context = &self.wallet;
+        let (sender, gas) = context.get_one_gas_object().await.unwrap().unwrap();
+        let tx = context.sign_transaction(
+            &TestTransactionBuilder::new(sender, gas, rgp)
+                .transfer_sui(amount, funding_address)
+                .build(),
+        );
+        context.execute_transaction_must_succeed(tx).await;
+
+        context
+            .get_one_gas_object_owned_by_address(funding_address)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
     #[cfg(msim)]
     pub fn set_safe_mode_expected(&self, value: bool) {
         for n in self.all_node_handles() {
@@ -654,6 +745,9 @@ pub struct TestClusterBuilder {
     jwk_fetch_interval: Option<Duration>,
     config_dir: Option<PathBuf>,
     default_jwks: bool,
+    authority_overload_config: Option<AuthorityOverloadConfig>,
+    data_ingestion_dir: Option<PathBuf>,
+    fullnode_run_with_range: Option<RunWithRange>,
 }
 
 impl TestClusterBuilder {
@@ -673,7 +767,17 @@ impl TestClusterBuilder {
             jwk_fetch_interval: None,
             config_dir: None,
             default_jwks: false,
+            authority_overload_config: None,
+            data_ingestion_dir: None,
+            fullnode_run_with_range: None,
         }
+    }
+
+    pub fn with_fullnode_run_with_range(mut self, run_with_range: Option<RunWithRange>) -> Self {
+        if let Some(run_with_range) = run_with_range {
+            self.fullnode_run_with_range = Some(run_with_range);
+        }
+        self
     }
 
     pub fn with_fullnode_rpc_port(mut self, rpc_port: u16) -> Self {
@@ -811,6 +915,17 @@ impl TestClusterBuilder {
         self
     }
 
+    pub fn with_authority_overload_config(mut self, config: AuthorityOverloadConfig) -> Self {
+        assert!(self.network_config.is_none());
+        self.authority_overload_config = Some(config);
+        self
+    }
+
+    pub fn with_data_ingestion_dir(mut self, path: PathBuf) -> Self {
+        self.data_ingestion_dir = Some(path);
+        self
+    }
+
     pub async fn build(mut self) -> TestCluster {
         // All test clusters receive a continuous stream of random JWKs.
         // If we later use zklogin authenticated transactions in tests we will need to supply
@@ -891,7 +1006,8 @@ impl TestClusterBuilder {
                     .clone()
                     .unwrap_or(self.validator_supported_protocol_versions_config.clone()),
             )
-            .with_db_checkpoint_config(self.db_checkpoint_config_fullnodes.clone());
+            .with_db_checkpoint_config(self.db_checkpoint_config_fullnodes.clone())
+            .with_fullnode_run_with_range(self.fullnode_run_with_range);
 
         if let Some(genesis_config) = self.genesis_config.take() {
             builder = builder.with_genesis_config(genesis_config);
@@ -899,6 +1015,10 @@ impl TestClusterBuilder {
 
         if let Some(network_config) = self.network_config.take() {
             builder = builder.with_network_config(network_config);
+        }
+
+        if let Some(authority_overload_config) = self.authority_overload_config.take() {
+            builder = builder.with_authority_overload_config(authority_overload_config);
         }
 
         if let Some(fullnode_rpc_port) = self.fullnode_rpc_port {
@@ -916,6 +1036,10 @@ impl TestClusterBuilder {
             builder = builder.dir(config_dir);
         }
 
+        if let Some(data_ingestion_dir) = self.data_ingestion_dir.take() {
+            builder = builder.with_data_ingestion_dir(data_ingestion_dir);
+        }
+
         let mut swarm = builder.build();
         swarm.launch().await?;
 
@@ -925,10 +1049,10 @@ impl TestClusterBuilder {
         let wallet_path = dir.join(SUI_CLIENT_CONFIG);
         let keystore_path = dir.join(SUI_KEYSTORE_FILENAME);
 
-        swarm.config().save(&network_path)?;
+        swarm.config().save(network_path)?;
         let mut keystore = Keystore::from(FileBasedKeystore::new(&keystore_path)?);
         for key in &swarm.config().account_keys {
-            keystore.add_key(SuiKeyPair::Ed25519(key.copy()))?;
+            keystore.add_key(None, SuiKeyPair::Ed25519(key.copy()))?;
         }
 
         let active_address = keystore.addresses().first().cloned();

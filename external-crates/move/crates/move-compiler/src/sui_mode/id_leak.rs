@@ -25,9 +25,11 @@ use crate::{
 use std::collections::BTreeMap;
 
 use super::{
-    AUTHENTICATOR_STATE_CREATE, AUTHENTICATOR_STATE_MODULE_NAME, CLOCK_MODULE_NAME, ID_LEAK_DIAG,
-    OBJECT_MODULE_NAME, OBJECT_NEW_UID_FROM_HASH, SUI_ADDR_NAME, SUI_CLOCK_CREATE,
-    SUI_SYSTEM_ADDR_NAME, SUI_SYSTEM_CREATE, SUI_SYSTEM_MODULE_NAME, UID_TYPE_NAME,
+    AUTHENTICATOR_STATE_CREATE, AUTHENTICATOR_STATE_MODULE_NAME, BRIDGE_ADDR_NAME, BRIDGE_CREATE,
+    BRIDGE_MODULE_NAME, CLOCK_MODULE_NAME, DENY_LIST_CREATE, DENY_LIST_MODULE_NAME, ID_LEAK_DIAG,
+    OBJECT_MODULE_NAME, OBJECT_NEW_UID_FROM_HASH, RANDOMNESS_MODULE_NAME, RANDOMNESS_STATE_CREATE,
+    SUI_ADDR_NAME, SUI_CLOCK_CREATE, SUI_SYSTEM_ADDR_NAME, SUI_SYSTEM_CREATE,
+    SUI_SYSTEM_MODULE_NAME, UID_TYPE_NAME,
 };
 
 pub const FRESH_ID_FUNCTIONS: &[(Symbol, Symbol, Symbol)] = &[
@@ -47,6 +49,13 @@ pub const FUNCTIONS_TO_SKIP: &[(Symbol, Symbol, Symbol)] = &[
         AUTHENTICATOR_STATE_MODULE_NAME,
         AUTHENTICATOR_STATE_CREATE,
     ),
+    (
+        SUI_ADDR_NAME,
+        RANDOMNESS_MODULE_NAME,
+        RANDOMNESS_STATE_CREATE,
+    ),
+    (SUI_ADDR_NAME, DENY_LIST_MODULE_NAME, DENY_LIST_CREATE),
+    (BRIDGE_ADDR_NAME, BRIDGE_MODULE_NAME, BRIDGE_CREATE),
 ];
 
 //**************************************************************************************************
@@ -88,14 +97,19 @@ impl SimpleAbsIntConstructor for IDLeakVerifier {
         context: &'a CFGContext<'a>,
         _init_state: &mut <Self::AI<'a> as SimpleAbsInt>::State,
     ) -> Option<Self::AI<'a>> {
-        let Some(module) = &context.module else {
-            return None;
-        };
-        let package_name = program.modules.get(module).unwrap().package_name;
+        let module = &context.module;
+        let mdef = program.modules.get(module).unwrap();
+        let package_name = mdef.package_name;
         let config = env.package_config(package_name);
         if config.flavor != Flavor::Sui {
+            // Skip if not sui
             return None;
         }
+        if config.is_dependency || !mdef.is_source_module {
+            // Skip non-source, dependency modules
+            return None;
+        }
+
         if let MemberName::Function(n) = &context.member {
             let should_skip = FUNCTIONS_TO_SKIP
                 .iter()

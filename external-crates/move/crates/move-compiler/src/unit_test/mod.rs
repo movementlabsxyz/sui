@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    compiled_unit::{AnnotatedCompiledUnit, NamedCompiledModule},
-    diagnostics::FilesSourceText,
-    shared::NumericalAddress,
+    compiled_unit::NamedCompiledModule, diagnostics::FilesSourceText, shared::NumericalAddress,
 };
 use move_core_types::{
     account_address::AccountAddress, identifier::Identifier, language_storage::ModuleId,
@@ -77,7 +75,7 @@ impl TestPlan {
     pub fn new(
         tests: Vec<ModuleTestPlan>,
         files: FilesSourceText,
-        units: Vec<AnnotatedCompiledUnit>,
+        units: Vec<NamedCompiledModule>,
     ) -> Self {
         let module_tests: BTreeMap<_, _> = tests
             .into_iter()
@@ -86,16 +84,7 @@ impl TestPlan {
 
         let module_info = units
             .into_iter()
-            .filter_map(|unit| {
-                if let AnnotatedCompiledUnit::Module(annot_module) = unit {
-                    Some((
-                        annot_module.named_module.module.self_id(),
-                        annot_module.named_module,
-                    ))
-                } else {
-                    None
-                }
-            })
+            .map(|unit| (unit.module.self_id(), unit))
             .collect();
 
         Self {
@@ -152,7 +141,7 @@ impl<'a> fmt::Display for ExpectedMoveErrorDisplay<'a> {
         }
         match location {
             Location::Undefined => write!(f, " in an unknown location"),
-            Location::Script => write!(f, " in the script"),
+            Location::Script => unreachable!(),
             Location::Module(id) => write!(f, " in the module {id}"),
         }
     }

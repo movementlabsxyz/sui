@@ -2,18 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const lightCodeTheme = require("prism-react-renderer/themes/github");
-const darkCodeTheme = require("prism-react-renderer/themes/dracula");
+const darkCodeTheme = require("prism-react-renderer/themes/nightOwl");
 const math = require("remark-math");
 const katex = require("rehype-katex");
+require("dotenv").config();
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "Sui Documentation",
+  staticDirectories: ["static"],
   tagline:
     "Sui is a next-generation smart contract platform with high throughput, low latency, and an asset-oriented programming model powered by Move",
   favicon: "img/favicon.ico",
   url: "https://docs.sui.io",
   baseUrl: "/",
+  customFields: {
+    amplitudeKey: process.env.AMPLITUDE_KEY,
+  },
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   /*  i18n: {
@@ -34,6 +39,18 @@ const config = {
   },
   plugins: [
     // ....
+    [
+      "@graphql-markdown/docusaurus",
+      {
+        schema:
+          "../../crates/sui-graphql-rpc/schema/current_progress_schema.graphql",
+        rootPath: "../content", // docs will be generated under rootPath/baseURL
+        baseURL: "references/sui-api/sui-graphql/reference",
+        loaders: {
+          GraphQLFileLoader: "@graphql-tools/graphql-file-loader",
+        },
+      },
+    ],
     [
       "docusaurus-plugin-includes",
       {
@@ -83,7 +100,10 @@ const config = {
           rehypePlugins: [katex],
         },
         theme: {
-          customCss: require.resolve("./src/css/custom.css"),
+          customCss: [
+            require.resolve("./src/css/fonts.css"),
+            require.resolve("./src/css/custom.css"),
+          ],
         },
         googleTagManager: {
           containerId: "GTM-TTZ5J8V",
@@ -91,14 +111,21 @@ const config = {
       }),
     ],
   ],
-
   stylesheets: [
+    {
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap",
+      type: "text/css",
+    },
     {
       href: "https://cdn.jsdelivr.net/npm/katex@0.13.24/dist/katex.min.css",
       type: "text/css",
       integrity:
         "sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM",
       crossorigin: "anonymous",
+    },
+    {
+      href: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css",
+      type: "text/css",
     },
   ],
   themes: ["@docusaurus/theme-mermaid"],
@@ -134,17 +161,17 @@ const config = {
 
         //... other Algolia params
       },
-      image: "img/og.jpg",
+      image: "img/sui-doc-og.png",
       docs: {
         sidebar: {
-          autoCollapseCategories: true,
+          autoCollapseCategories: false,
         },
       },
       navbar: {
         title: "Sui Documentation",
         logo: {
           alt: "Sui Docs Logo",
-          src: "img/logo.svg",
+          src: "img/sui-logo.svg",
         },
         items: [
           {
@@ -164,7 +191,7 @@ const config = {
             to: "references",
           },
 
-          /*          
+          /*
           {
             type: "docsVersionDropdown",
             position: "right",
@@ -178,13 +205,23 @@ const config = {
         ],
       },
       footer: {
+        logo: {
+          alt: "Sui Logo",
+          src: "img/sui-logo-footer.svg",
+          href: "https://sui.io",
+        },
         style: "dark",
         copyright: `© ${new Date().getFullYear()} Sui Foundation | Documentation distributed under <a href="https://github.com/sui-foundation/sui-docs/blob/main/LICENSE">CC BY 4.0</a>`,
       },
+
+      /**
+       * Syntax Highlighting Configuration
+       * TODO: add better themes like Atom One Dark / Light
+       */
       prism: {
         theme: lightCodeTheme,
         darkTheme: darkCodeTheme,
-        additionalLanguages: ["rust"],
+        additionalLanguages: ["rust", "typescript", "toml"],
       },
     }),
 };

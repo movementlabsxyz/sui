@@ -148,6 +148,8 @@ impl Display for AuthorityIdentifier {
 }
 
 impl Committee {
+    pub const DEFAULT_FILENAME: &'static str = "committee.json";
+
     /// Any committee should be created via the CommitteeBuilder - this is intentionally be marked as
     /// private method.
     fn new(authorities: BTreeMap<PublicKey, Authority>, epoch: Epoch) -> Self {
@@ -529,6 +531,26 @@ impl CommitteeBuilder {
     }
 }
 
+impl std::fmt::Display for Committee {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Committee E{}: {:?}",
+            self.epoch(),
+            self.authorities
+                .keys()
+                .map(|x| {
+                    if let Some(k) = x.encode_base64().get(0..16) {
+                        k.to_owned()
+                    } else {
+                        format!("Invalid key: {}", x)
+                    }
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Authority, Committee};
@@ -585,25 +607,5 @@ mod tests {
             assert_eq!(*id, authority_2.id());
             assert_eq!(&public_key, authority_1.protocol_key());
         }
-    }
-}
-
-impl std::fmt::Display for Committee {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Committee E{}: {:?}",
-            self.epoch(),
-            self.authorities
-                .keys()
-                .map(|x| {
-                    if let Some(k) = x.encode_base64().get(0..16) {
-                        k.to_owned()
-                    } else {
-                        format!("Invalid key: {}", x)
-                    }
-                })
-                .collect::<Vec<_>>()
-        )
     }
 }

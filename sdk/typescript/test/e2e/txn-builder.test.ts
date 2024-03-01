@@ -15,10 +15,10 @@ import {
 	upgradePackage,
 } from './utils/setup';
 
-import '../../src/builder/TransactionBlockData';
+import '../../src/transactions/TransactionBlockData';
 
 import { bcs } from '../../src/bcs';
-import { TransactionBlock } from '../../src/builder';
+import { TransactionBlock } from '../../src/transactions';
 
 export const SUI_CLOCK_OBJECT_ID = normalizeSuiObjectId('0x6');
 
@@ -132,6 +132,19 @@ describe('Transaction Builders', () => {
 		});
 		tx.moveCall({
 			target: `${packageId}::serializer_tests::set_value`,
+			arguments: [tx.object(sharedObjectId)],
+		});
+		await validateTransaction(toolbox.client, toolbox.keypair, tx);
+	});
+
+	it('Move Shared Object Call by Value', async () => {
+		const tx = new TransactionBlock();
+		tx.moveCall({
+			target: `${packageId}::serializer_tests::value`,
+			arguments: [tx.object(sharedObjectId)],
+		});
+		tx.moveCall({
+			target: `${packageId}::serializer_tests::delete_value`,
 			arguments: [tx.object(sharedObjectId)],
 		});
 		await validateTransaction(toolbox.client, toolbox.keypair, tx);
